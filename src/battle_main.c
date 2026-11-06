@@ -12,6 +12,7 @@
 #include "battle_hold_effects.h"
 #include "battle_interface.h"
 #include "battle_main.h"
+#include "battle_camera.h"
 #include "battle_message.h"
 #include "battle_pyramid.h"
 #include "battle_scripts.h"
@@ -502,6 +503,7 @@ static void CB2_InitBattleInternal(void)
 {
     s32 i;
 
+    BattleCamera_Reset();
     SetHBlankCallback(NULL);
     SetVBlankCallback(NULL);
 
@@ -1825,10 +1827,18 @@ void BattleMainCB2(void)
 
 static void RunBattleSoftwareTick(void)
 {
+    bool32 oamLoadDisabled;
+
     // Preserve the original order for every logical tick. BuildOamBuffer only
     // creates the software snapshot; the last snapshot is uploaded at VBlank.
     AnimateSprites();
+    // Publish scene offsets and OAM as one presentation snapshot.
+    oamLoadDisabled = gMain.oamLoadDisabled;
+    gMain.oamLoadDisabled = TRUE;
+    BattleCamera_BeginFrame();
     BuildOamBuffer();
+    BattleCamera_EndFrame();
+    gMain.oamLoadDisabled = oamLoadDisabled;
     RunTextPrinters();
     UpdatePaletteFade();
     RunTasks();
@@ -1880,6 +1890,7 @@ static bool32 CanRunExtraBattleTick(void)
 
 static void FreeRestoreBattleData(void)
 {
+    BattleCamera_Reset();
     gMain.callback1 = gPreBattleCallback1;
     gScanlineEffect.state = 3;
     gMain.inBattle = FALSE;
@@ -2237,8 +2248,11 @@ void VBlankCB_Battle(void)
     SetGpuReg(REG_OFFSET_BG1VOFS, gBattle_BG1_Y);
     SetGpuReg(REG_OFFSET_BG2HOFS, gBattle_BG2_X);
     SetGpuReg(REG_OFFSET_BG2VOFS, gBattle_BG2_Y);
-    SetGpuReg(REG_OFFSET_BG3HOFS, gBattle_BG3_X);
-    SetGpuReg(REG_OFFSET_BG3VOFS, gBattle_BG3_Y);
+    if (!gMain.oamLoadDisabled)
+    {
+        SetGpuReg(REG_OFFSET_BG3HOFS, gBattle_BG3_X + BattleCamera_GetBgX());
+        SetGpuReg(REG_OFFSET_BG3VOFS, gBattle_BG3_Y + BattleCamera_GetBgY());
+    }
     SetGpuReg(REG_OFFSET_WIN0H, gBattle_WIN0H);
     SetGpuReg(REG_OFFSET_WIN0V, gBattle_WIN0V);
     SetGpuReg(REG_OFFSET_WIN1H, gBattle_WIN1H);

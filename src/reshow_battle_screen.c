@@ -1,6 +1,7 @@
 #include "global.h"
 #include "reshow_battle_screen.h"
 #include "battle.h"
+#include "battle_camera.h"
 #include "palette.h"
 #include "pokemon.h"
 #include "main.h"
@@ -37,6 +38,7 @@ void ReshowBattleScreenAfterMenu(void)
     gPaletteFade.bufferTransferDisabled = 1;
     SetHBlankCallback(NULL);
     SetVBlankCallback(NULL);
+    BattleCamera_Cancel();
     SetGpuReg(REG_OFFSET_MOSAIC, 0);
     gBattleScripting.reshowMainState = 0;
     gBattleScripting.reshowHelperState = 0;
