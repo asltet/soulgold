@@ -2260,6 +2260,7 @@ void VBlankCB_Battle(void)
     LoadOam();
     ProcessSpriteCopyRequests();
     TransferPlttBuffer();
+    BattleCamera_PublishScanlines();
     ScanlineEffect_InitHBlankDmaTransfer();
 }
 

@@ -34,6 +34,8 @@ struct ScanlineEffect
 };
 
 extern struct ScanlineEffect gScanlineEffect;
+// Changes on managed ownership transitions, even when register parameters match.
+extern u32 gScanlineEffectGeneration;
 
 extern u16 ALIGNED(4) gScanlineEffectRegBuffers[2][0x3C0];
 

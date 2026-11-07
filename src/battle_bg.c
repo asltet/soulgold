@@ -2,6 +2,7 @@
 #include "battle.h"
 #include "battle_anim.h"
 #include "battle_bg.h"
+#include "battle_camera.h"
 #include "battle_main.h"
 #include "battle_message.h"
 #include "battle_setup.h"
@@ -686,6 +687,7 @@ static void LoadBattleEnvironmentGfx(u16 environment)
     DecompressDataWithHeaderVram(gBattleEnvironmentInfo[environment].background.tilemap, (void *)(BG_SCREEN_ADDR(26)));
     LoadPalette(gBattleEnvironmentInfo[environment].palette, BG_PLTT_ID(2), 3 * PLTT_SIZE_4BPP);
     TimeMixBattleBgPalette(FALSE);
+    BattleCamera_SetEnvironment(environment);
 }
 
 // Loads the entry associated with the battle environment.

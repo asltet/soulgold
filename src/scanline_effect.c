@@ -16,10 +16,12 @@ static void CopyValue32Bit(void);
 EWRAM_DATA u16 ALIGNED(4) gScanlineEffectRegBuffers[2][0x3C0] = {0};
 
 EWRAM_DATA struct ScanlineEffect gScanlineEffect = {0};
+EWRAM_DATA u32 gScanlineEffectGeneration = 0;
 EWRAM_DATA static bool8 sShouldStopWaveTask = FALSE;
 
 void ScanlineEffect_Stop(void)
 {
+    gScanlineEffectGeneration++;
     gScanlineEffect.state = 0;
     DmaStop(0);
     if (gScanlineEffect.waveTaskId != TASK_NONE)
@@ -31,6 +33,7 @@ void ScanlineEffect_Stop(void)
 
 void ScanlineEffect_Clear(void)
 {
+    gScanlineEffectGeneration++;
     CpuFill16(0, gScanlineEffectRegBuffers, sizeof(gScanlineEffectRegBuffers));
     gScanlineEffect.dmaSrcBuffers[0] = NULL;
     gScanlineEffect.dmaSrcBuffers[1] = NULL;
@@ -43,6 +46,7 @@ void ScanlineEffect_Clear(void)
 
 void ScanlineEffect_SetParams(struct ScanlineEffectParams params)
 {
+    gScanlineEffectGeneration++;
     if (params.dmaControl == SCANLINE_EFFECT_DMACNT_16BIT)  // 16-bit
     {
         // Set the DMA src to the value for the second scanline because the
