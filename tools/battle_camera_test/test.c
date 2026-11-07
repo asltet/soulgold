@@ -210,7 +210,8 @@ int main(void)
     {
         BattleCamera_BeginFrame();
         BattleCamera_EndFrame();
-        assert(!sCamera.active);
+        if (i == 77)
+            assert(sCamera.active && sCamera.zoom == BATTLE_CAMERA_MAX_ZOOM);
     }
     // An existing scanline owner is never displaced or stopped.
     Ready();
@@ -283,6 +284,29 @@ int main(void)
         assert(!sCamera.active);
     }
     gBattle_BG3_X = 0;
+    // Repeat while idle, with a neutral gap and no retained affine matrices.
+    Ready();
+    {
+        u32 starts = 0;
+        bool32 wasActive = FALSE;
+        for (i = 0; i < 380; i++)
+        {
+            BattleCamera_BeginFrame();
+            if (sCamera.active && !wasActive)
+            {
+                starts++;
+                if (starts == 2)
+                    assert(i == BATTLE_CAMERA_WAIT_TICKS - 1 + 2 * BATTLE_CAMERA_MOVE_TICKS
+                                + BATTLE_CAMERA_HOLD_TICKS + BATTLE_CAMERA_REPEAT_TICKS);
+            }
+            if (!sCamera.active)
+                assert(sCamera.zoom == 256 && !sOwnsScanlines);
+            wasActive = sCamera.active;
+            BattleCamera_EndFrame();
+            assert(sAllocated == 0 && sBackupCount == 0);
+        }
+        assert(starts == 2);
+    }
     // Every loaded environment and wild/trainer/special battle flag combination
     // must be admitted, including doubles with eight distinct scene sprites.
     {
@@ -329,6 +353,6 @@ int main(void)
             }
         }
     }
-    puts("PASS: stronger track, row coverage, contact mapping, restoration, matrix rollback, affine/flips, UI, all environments and battle types, doubles, DMA ownership, interrupted publication");
+    puts("PASS: stronger track, row coverage, contact mapping, restoration, matrix rollback, affine/flips, UI, all environments and battle types, doubles, recurring idle passes, DMA ownership, interrupted publication");
     return 0;
 }

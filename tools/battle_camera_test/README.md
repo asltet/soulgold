@@ -65,3 +65,13 @@ specialized turf extension; other environments reflect their own ground edge.
 The native fixture now covers every environment ID, wild/trainer/link/Frontier/
 recorded flags, two/four battlers, and retry after an initially busy scanline
 owner releases its resource. Visual platform/seam checks remain necessary.
+
+## Recurring idle camera
+
+The once-per-battle latch is removed. The shot repeats during action selection,
+with `BATTLE_CAMERA_REPEAT_TICKS` (default90) neutral ticks between completed
+passes. On returning after attacks/switches/menus, the existing initial wait
+(default30 ticks) applies. Cancellation still releases the scanline lease;
+no resources are held through the neutral pause. The native test checks two
+cycles and their exact configured repeat interval, plus resumption after leaving
+action selection. Move-triggered camera choreography is still separate work.

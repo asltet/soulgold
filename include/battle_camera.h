@@ -12,6 +12,7 @@
 #define BATTLE_CAMERA_EASING BATTLE_CAMERA_EASING_SMOOTHSTEP // 0 = linear.
 #define BATTLE_CAMERA_MOVE_TICKS 48
 #define BATTLE_CAMERA_HOLD_TICKS 24
+#define BATTLE_CAMERA_REPEAT_TICKS 90        // Neutral pause between idle passes.
 #define BATTLE_CAMERA_WAIT_TICKS 30
 
 // Prepared battle-background artwork profile: unwrapped X 0..255, Y -16..175.
@@ -31,6 +32,9 @@
 #endif
 #if BATTLE_CAMERA_MOVE_TICKS < 1 || BATTLE_CAMERA_MOVE_TICKS > 600 || BATTLE_CAMERA_HOLD_TICKS < 0 || BATTLE_CAMERA_HOLD_TICKS > 600 || BATTLE_CAMERA_WAIT_TICKS < 1 || BATTLE_CAMERA_WAIT_TICKS > 600
 #error Invalid camera duration
+#endif
+#if BATTLE_CAMERA_REPEAT_TICKS < 1 || BATTLE_CAMERA_REPEAT_TICKS > 600
+#error Invalid camera repeat delay
 #endif
 #if BATTLE_CAMERA_NEAR_CONTACT <= BATTLE_CAMERA_HORIZON
 #error Invalid camera ground depth interval

@@ -29,8 +29,8 @@ struct CameraSpriteBackup
 static EWRAM_DATA struct BattleCamera sCamera = {0};
 static EWRAM_DATA struct CameraSpriteBackup sBackups[MAX_BATTLERS_COUNT * 3] = {0};
 static EWRAM_DATA u8 sBackupCount = 0;
-static EWRAM_DATA bool8 sDemoPlayed = FALSE;
 static EWRAM_DATA u16 sIdleFrames = 0;
+static EWRAM_DATA u16 sWaitTicks = 0;
 static EWRAM_DATA bool8 sSceneReady = FALSE;
 static EWRAM_DATA bool8 sOwnsScanlines = FALSE;
 static EWRAM_DATA u32 sScanlineGeneration = 0;
@@ -56,12 +56,12 @@ void BattleCamera_Cancel(void)
     memset(&sCamera, 0, sizeof(sCamera));
     sCamera.zoom = sCamera.targetZoom = 256;
     sIdleFrames = 0;
+    sWaitTicks = BATTLE_CAMERA_WAIT_TICKS;
 }
 
 void BattleCamera_Reset(void)
 {
     BattleCamera_Cancel();
-    sDemoPlayed = FALSE;
     sSceneReady = FALSE;
 }
 
@@ -210,7 +210,7 @@ void BattleCamera_BeginFrame(void)
         BattleCamera_Cancel();
         return;
     }
-    if (!sCamera.active && !sDemoPlayed && ++sIdleFrames >= BATTLE_CAMERA_WAIT_TICKS)
+    if (!sCamera.active && ++sIdleFrames >= sWaitTicks)
     {
         BattleCamera_Cancel();
         sCamera.targetX = BATTLE_CAMERA_MAX_PAN_X * 256;
@@ -222,7 +222,6 @@ void BattleCamera_BeginFrame(void)
             return;
         }
         sCamera.active = TRUE;
-        sDemoPlayed = TRUE;
     }
     if (!sCamera.active)
         return;
@@ -230,6 +229,7 @@ void BattleCamera_BeginFrame(void)
     if (frame >= end)
     {
         BattleCamera_Cancel();
+        sWaitTicks = BATTLE_CAMERA_REPEAT_TICKS;
         return;
     }
     frame = frame < BATTLE_CAMERA_MOVE_TICKS ? frame
