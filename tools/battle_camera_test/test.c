@@ -55,10 +55,16 @@ struct ScanlineEffect gScanlineEffect;
 u32 gScanlineEffectGeneration;
 u16 ALIGNED(4) gScanlineEffectRegBuffers[2][0x3C0];
 static bool32 sChoosing = TRUE;
+static bool32 sDoubleCoords = FALSE;
 
 u8 GetBattlerSpriteCoord(enum BattlerId battler, u8 coord)
 {
     assert(coord == BATTLER_COORD_Y);
+    if (sDoubleCoords)
+    {
+        static const u8 y[] = {80,40,84,32};
+        return y[GetBattlerPosition(battler)];
+    }
     return (battler & 1) ? 40 : 80;
 }
 void ScanlineEffect_Stop(void) { gScanlineEffectGeneration++; gScanlineEffect.state = 0; }
@@ -135,7 +141,7 @@ static void Tick(u32 allocated)
     BattleCamera_BeginFrame();
     assert(sCamera.zoom >= 256 && sCamera.zoom <= BATTLE_CAMERA_MAX_ZOOM);
     assert(sCamera.x >= 0 && sCamera.x <= BATTLE_CAMERA_MAX_PAN_X * 256);
-    assert(sCamera.y <= 0 && sCamera.y >= -BATTLE_CAMERA_MAX_PAN_Y * 256);
+    assert(abs(sCamera.y) <= BATTLE_CAMERA_MAX_PAN_Y * 256);
     assert(memcmp(&sOriginal[4], &gSprites[4], sizeof(struct Sprite)) == 0);
     if (sCamera.active)
     {
@@ -182,7 +188,7 @@ static void TestDepthProjection(void)
     assert(SceneScale(72, BATTLE_CAMERA_BATTLER_DEPTH_SCALE)
         == SceneScale(72, BATTLE_CAMERA_SHADOW_DEPTH_SCALE));
     for (zoom = 256; zoom <= BATTLE_CAMERA_MAX_ZOOM; zoom++)
-        for (y = -BATTLE_CAMERA_MAX_PAN_Y * 256; y <= 0; y += 256)
+        for (y = -BATTLE_CAMERA_MAX_PAN_Y * 256; y <= BATTLE_CAMERA_MAX_PAN_Y * 256; y += 256)
             for (blend = 0; blend <= 256; blend += 32)
             {
                 sCamera.zoom = zoom;
@@ -648,7 +654,7 @@ static void TestMoveCamera(void)
         StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
         // Pan creates room on the right; changing to self/no pan is stricter.
         SetMoveGoal(0, 8, 12);
-        assert(sCamera.targetZoom == 256);
+        assert(sCamera.targetZoom < 256 + BATTLE_CAMERA_TARGET_ZOOM_DELTA);
         FinishTestMove();
         gSprites[id].oam.size = 1; // Small16px art at the same location needs less room.
         gSprites[id].centerToCornerVecX = gSprites[id].centerToCornerVecY = -8;
@@ -704,7 +710,7 @@ static void TestMoveCamera(void)
     for (i = 0; i < 30; i++)
     {
         Tick(0);
-        assert(sCamera.active && sCamera.zoom == 256 && sCamera.x <= BATTLE_CAMERA_FIELD_PAN_X * 256);
+        assert(sCamera.active && sCamera.zoom <= 256 + BATTLE_CAMERA_GROUP_ZOOM_DELTA && sCamera.x <= BATTLE_CAMERA_MOVE_PAN_X * 256);
     }
     FinishTestMove();
     StartTestMove(MOVE_RAIN_DANCE, 0, MAX_BATTLERS_COUNT, TARGET_FIELD, gBattleAnimMove_RainDance);
@@ -995,5 +1001,82 @@ static void TestMoveCamera(void)
     assert(!sMoveCamera.active && gScanlineEffect.state == 1);
     ScanlineEffect_Stop();
     Ready();
+    // Target-side composition, real double coordinates, and VFX-aware context.
+    {
+        struct Sprite saved[MAX_SPRITES + 1];
+        s16 farX, farY, farZoom, leftZoom, rightZoom;
+        memcpy(saved, gSprites, sizeof(saved));
+        gBattlersCount = 2;
+        for (i = 0; i < 2; i++)
+        {
+            gSprites[gBattlerSpriteIds[i]].x = i ? 176 : 72;
+            gSprites[gBattlerSpriteIds[i]].y = i ? 40 : 80;
+            gSprites[gBattlerSpriteIds[i]].x2 = gSprites[gBattlerSpriteIds[i]].y2 = 0;
+        }
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        StartTestMove(MOVE_GROWL, 0, 1, TARGET_BOTH, gBattleAnimMove_Growl);
+        farX = sCamera.targetX; farY = sCamera.targetY; farZoom = sCamera.targetZoom;
+        assert(sMoveCamera.focusMask == 2);
+        for (i = 0; i < 40; i++) Tick(0);
+        assert(sMoveCamera.contextWeight[0] > 0 && sMoveCamera.contextWeight[1] == 0);
+        assert(ActorScale(0, sCamera.zoom) < ActorScale(1, sCamera.zoom));
+        StartTestMove(MOVE_PECK, 1, 0, TARGET_SELECTED, gBattleAnimMove_Peck);
+        assert(sMoveCamera.contextWeight[0] > 0); // Inherit quiet context; fade into the next target.
+        FinishTestMove();
+        StartTestMove(MOVE_GROWL, 0, 1, TARGET_BOTH, gBattleAnimMove_Growl);
+        for (i = 0; i < 40; i++) Tick(0);
+        gSprites[9].inUse = TRUE;
+        gSprites[9].invisible = FALSE;
+        gSprites[9].oam.affineMode = ST_OAM_AFFINE_OFF;
+        gSprites[9].x = 72; gSprites[9].y = 80;
+        gSprites[9].x2 = gSprites[9].y2 = 0;
+        BattleCamera_OnSpriteCreated(9, 0);
+        sMoveCamera.focusMask = 1; // A previously quiet actor becomes the effect's focus.
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        Tick(0);
+        assert(sMoveCamera.contextWeight[0] == 0); // Nearby VFX restore common scale immediately.
+        FinishTestMove();
+        StartTestMove(MOVE_GROWL, 1, 0, TARGET_BOTH, gBattleAnimMove_Growl);
+        assert(sMoveCamera.focusMask == 1 && sCamera.targetY > 0);
+        assert(sCamera.targetX != farX || sCamera.targetY != farY || sCamera.targetZoom != farZoom);
+        FinishTestMove();
+
+        gBattlersCount = 4;
+        sDoubleCoords = TRUE;
+        for (i = 0; i < 4; i++)
+        {
+            static const u8 x[] = {32,200,90,152}, y[] = {80,40,84,32};
+            u8 id = gBattlerSpriteIds[i];
+            gSprites[id].x = x[i]; gSprites[id].y = y[i];
+            gSprites[id].x2 = gSprites[id].y2 = 0;
+            gSprites[id].oam.affineMode = ST_OAM_AFFINE_OFF;
+            gSprites[id].invisible = FALSE;
+        }
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        StartTestMove(MOVE_GROWL, 1, 0, TARGET_BOTH, gBattleAnimMove_Growl);
+        assert(sMoveCamera.focusMask == 5 && sCamera.targetY > 0);
+        FinishTestMove();
+        StartTestMove(MOVE_GROWL, 0, 1, TARGET_BOTH, gBattleAnimMove_Growl);
+        assert(sMoveCamera.focusMask == 10 && sCamera.targetY < 0);
+        FinishTestMove();
+        StartTestMove(MOVE_PECK, 1, 0, TARGET_SELECTED, gBattleAnimMove_Peck);
+        assert(sMoveCamera.focusMask == 1);
+        leftZoom = sCamera.targetZoom;
+        for (i = 0; i < 40; i++) Tick(0);
+        assert(sMoveCamera.contextWeight[0] == 0 && sMoveCamera.contextWeight[2] > 0);
+        FinishTestMove();
+        StartTestMove(MOVE_PECK, 1, 2, TARGET_SELECTED, gBattleAnimMove_Peck);
+        assert(sMoveCamera.focusMask == 4);
+        rightZoom = sCamera.targetZoom;
+        assert(rightZoom >= leftZoom);
+        for (i = 0; i < 40; i++) Tick(0);
+        assert(sMoveCamera.contextWeight[2] == 0 && sMoveCamera.contextWeight[0] > 0);
+        FinishTestMove();
+        sDoubleCoords = FALSE;
+        memcpy(gSprites, saved, sizeof(saved));
+        memcpy(sOriginal, saved, sizeof(saved));
+        Ready();
+    }
+    puts("PASS: Growl side/group composition, doubled target masks, quiet context and VFX protection");
     puts("PASS: repeated executed moves, both sides, resolved self/ally/spread/field targets, projectile alignment, impacts, invalidation, interruption, timeout, neutral reset");
 }

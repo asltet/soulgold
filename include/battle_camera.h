@@ -7,6 +7,12 @@
 #define BATTLE_CAMERA_MAX_SCENE_SPRITES 24
 #define BATTLE_CAMERA_MOVE_MAX_TICKS 1200
 #define BATTLE_CAMERA_FIELD_PAN_X 4
+#define BATTLE_CAMERA_TARGET_ZOOM_DELTA 28
+#define BATTLE_CAMERA_GROUP_ZOOM_DELTA 12
+#define BATTLE_CAMERA_CONTEXT_ZOOM_SHARE 64 // Q8: keep one quarter of extra zoom.
+#define BATTLE_CAMERA_CONTEXT_SHRINK 4     // Q8: mild quiet-background recession.
+#define BATTLE_CAMERA_CONTEXT_STEP 16
+#define BATTLE_CAMERA_VFX_MARGIN 24
 #define BATTLE_CAMERA_MOVE_ZOOM_DELTA 24 // Up to1.094x; framing may reduce.
 #define BATTLE_CAMERA_HANDOFF_TICKS 16
 #define BATTLE_CAMERA_FOCUS_LEFT_X 72
@@ -16,7 +22,7 @@
 #define BATTLE_CAMERA_MOVE_PAN_X 16         // Stronger moves, within prepared artwork.
 #define BATTLE_CAMERA_IDLE_DOUBLES_PAN_X 12 // Preserve the near edge in doubles.
 #define BATTLE_CAMERA_IDLE_PAN_Y 2          // Less vertical scenery deformation.
-#define BATTLE_CAMERA_MAX_PAN_Y 4           // Upward camera pan, pixels.
+#define BATTLE_CAMERA_MAX_PAN_Y 4           // Signed move pan; idle stays upward.
 #define BATTLE_CAMERA_PARALLAX 160          // Far pan attenuation (0 = uniform).
 #define BATTLE_CAMERA_EASING_LINEAR 0
 #define BATTLE_CAMERA_EASING_SMOOTHSTEP 1
@@ -125,6 +131,13 @@
 
 #if BATTLE_CAMERA_MOVE_ZOOM_DELTA < 0 || BATTLE_CAMERA_MOVE_ZOOM_DELTA > BATTLE_CAMERA_MAX_ZOOM - 256 || BATTLE_CAMERA_FIELD_PAN_X < 0 || BATTLE_CAMERA_FIELD_PAN_X > BATTLE_CAMERA_MOVE_PAN_X
 #error Universal camera cue exceeds artwork envelope
+#endif
+
+#if BATTLE_CAMERA_TARGET_ZOOM_DELTA < 0 || BATTLE_CAMERA_TARGET_ZOOM_DELTA > BATTLE_CAMERA_MAX_ZOOM - 256 || BATTLE_CAMERA_GROUP_ZOOM_DELTA < 0 || BATTLE_CAMERA_GROUP_ZOOM_DELTA > BATTLE_CAMERA_TARGET_ZOOM_DELTA
+#error Invalid target/group zoom limits
+#endif
+#if BATTLE_CAMERA_CONTEXT_ZOOM_SHARE < 0 || BATTLE_CAMERA_CONTEXT_ZOOM_SHARE > 256 || BATTLE_CAMERA_CONTEXT_SHRINK < 0 || BATTLE_CAMERA_CONTEXT_SHRINK > 8 || BATTLE_CAMERA_CONTEXT_STEP < 1 || BATTLE_CAMERA_CONTEXT_STEP > 256 || BATTLE_CAMERA_VFX_MARGIN < 0 || BATTLE_CAMERA_VFX_MARGIN > 48
+#error Invalid context emphasis settings
 #endif
 
 enum BattleCameraMovePhase

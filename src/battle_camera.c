@@ -125,6 +125,8 @@ struct MoveCameraState
     bool8 generic, suspended;
     bool8 visualSeen, targetAcquired;
     u8 framing, bgLayer[MAX_BATTLERS_COUNT];
+    u8 focusMask;
+    u16 contextWeight[MAX_BATTLERS_COUNT];
     u16 move;
     u8 targetType;
     const u8 *script;
@@ -164,6 +166,7 @@ static void EndMoveNow(void);
 static void SuspendMoveNow(void);
 static bool32 UpdateMoveCamera(void);
 static void SetMoveGoal(u8 focus, u16 duration, u16 zoom);
+static bool32 HasUncertainBounds(const struct Sprite *sprite);
 
 static bool32 HasScanlineLease(void)
 {
@@ -335,7 +338,9 @@ static s32 RenderX(void)
 
 static s32 RenderY(void)
 {
-    return max(-BATTLE_CAMERA_MAX_PAN_Y * 256, min(0, sCamera.y + sShakeY));
+    return max(-BATTLE_CAMERA_MAX_PAN_Y * 256,
+               min(min(BATTLE_CAMERA_MAX_PAN_Y, BATTLE_CAMERA_SOURCE_MAX_Y - DISPLAY_HEIGHT) * 256,
+                   sCamera.y + sShakeY));
 }
 
 static s32 PanAt(s32 sourceY)
@@ -431,6 +436,72 @@ static bool32 AcquireScanlines(void)
     return TRUE;
 }
 
+static bool32 HasMonBgActors(void)
+{
+    u32 i;
+    for (i = 0; i < gBattlersCount; i++)
+        if (sMoveCamera.bgLayer[i])
+            return TRUE;
+    return FALSE;
+}
+
+static bool32 HasNearbyVfx(u8 battler)
+{
+    u32 i;
+    const struct Sprite *actor = &gSprites[sMoveCamera.actorSprite[battler]];
+    s32 x = actor->x + actor->x2, y = actor->y + actor->y2;
+    if (actor->x2 || actor->y2 || HasUncertainBounds(actor))
+        return TRUE;
+    for (i = 0; i < MAX_SPRITES; i++)
+        if ((sMoveCamera.effects[i / 32] & (1u << (i % 32))) && gSprites[i].inUse
+            && !gSprites[i].invisible && gSprites[i].oam.affineMode != ST_OAM_AFFINE_ERASE)
+        {
+            const struct Sprite *effect = &gSprites[i];
+            s32 halfX, halfY;
+            if (effect->oam.shape >= 3)
+                return TRUE;
+            halfX = gOamDimensions[effect->oam.shape][effect->oam.size].width / 2;
+            halfY = gOamDimensions[effect->oam.shape][effect->oam.size].height / 2;
+            if (abs(effect->x + effect->x2 - x) <= sMoveCamera.halfWidth[battler] + halfX + BATTLE_CAMERA_VFX_MARGIN
+                && abs(effect->y + effect->y2 - y) <= sMoveCamera.halfHeight[battler] + halfY + BATTLE_CAMERA_VFX_MARGIN)
+                return TRUE;
+        }
+    return FALSE;
+}
+
+static s32 QuietScale(s32 common)
+{
+    return 256 + (common - 256) * BATTLE_CAMERA_CONTEXT_ZOOM_SHARE / 256 - BATTLE_CAMERA_CONTEXT_SHRINK;
+}
+
+static void UpdateActorEmphasis(void)
+{
+    u32 i;
+    bool32 sharedOnly = HasMonBgActors() || sMoveCamera.profile == MOVE_CAMERA_EMBER;
+    bool32 enabled = sMoveCamera.active && !sMoveCamera.blocked && sMoveBlend == 256
+                 && !sharedOnly && sMoveCamera.focusMask && sMoveCamera.phase != CAMERA_PHASE_RETURN;
+    for (i = 0; i < gBattlersCount; i++)
+    {
+        s32 goal = 0, weight = sMoveCamera.contextWeight[i];
+        if (sharedOnly)
+            weight = 0;
+        if (enabled && (sMoveCamera.actorMask & (1u << i)))
+        {
+            if (HasNearbyVfx(i))
+                weight = 0; // Newly attached VFX must align on their first visible frame.
+            else if (!(sMoveCamera.focusMask & (1u << i)))
+                goal = 256;
+        }
+        sMoveCamera.contextWeight[i] = weight + max(-BATTLE_CAMERA_CONTEXT_STEP,
+                                             min(BATTLE_CAMERA_CONTEXT_STEP, goal - weight));
+    }
+}
+
+static s32 ActorScale(u8 battler, s32 common)
+{
+    return common + (QuietScale(common) - common) * sMoveCamera.contextWeight[battler] / 256;
+}
+
 static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
 {
     struct Sprite *sprite;
@@ -462,12 +533,12 @@ static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
     {
         s32 originalY = sprite->y + sprite->y2;
         s32 projectedY;
-        if (sMoveCamera.active && sMoveBlend == 256)
+        if (sMoveCamera.active && sMoveBlend == 256 && scale == sCamera.zoom)
             projectedY = GroundY(originalY);
         else
         {
             projectedY = GroundY(anchorY) + (originalY - anchorY) * scale / 256;
-            if (sMoveCamera.active)
+            if (sMoveCamera.active && !(sMoveBlend == 256 && scale != sCamera.zoom))
                 projectedY += (GroundY(originalY) - projectedY) * sMoveBlend / 256;
         }
         sprite->y = projectedY - sprite->y2;
@@ -589,6 +660,7 @@ void BattleCamera_BeginFrame(void)
         return;
 
 compose:
+    UpdateActorEmphasis();
     if (!BuildRows())
         goto cancel;
     for (battler = 0; battler < gBattlersCount; battler++)
@@ -604,11 +676,15 @@ compose:
         if (GetBattlerSide(battler) == B_SIDE_PLAYER)
             anchorY += 8; // Matches GetBattlerSpriteFinal_Y's player adjustment.
         scale = SceneScale(anchorY, BATTLE_CAMERA_BATTLER_DEPTH_SCALE);
+        if (sMoveCamera.active)
+            scale = ActorScale(battler, scale);
         if (!TransformSprite(id, anchorX, anchorY, scale))
             goto cancel;
         if (GetBattlerSide(battler) == B_SIDE_OPPONENT)
         {
             s16 shadowScale = SceneScale(anchorY, BATTLE_CAMERA_SHADOW_DEPTH_SCALE);
+            if (sMoveCamera.active)
+                shadowScale = ActorScale(battler, shadowScale);
             if (!TransformSprite(gBattleSpritesDataPtr->healthBoxesData[battler].shadowSpriteIdPrimary, anchorX, anchorY, shadowScale))
                 goto cancel;
             if (B_ENEMY_MON_SHADOW_STYLE >= GEN_4 && P_GBA_STYLE_SPECIES_GFX == FALSE
@@ -734,8 +810,15 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
     u32 i;
     s16 oldX = sCamera.x, oldY = sCamera.y, oldZoom = sCamera.zoom;
     u16 oldBlend = sMoveCamera.active ? sMoveBlend : 0;
+    u16 oldContext[MAX_BATTLERS_COUNT];
+    u8 oldActor[MAX_BATTLERS_COUNT];
+    const struct SpriteFrameImage *oldImages[MAX_BATTLERS_COUNT];
+    u8 oldActorMask = sMoveCamera.active ? sMoveCamera.actorMask : 0;
     bool32 inherit = sCamera.active && HasScanlineLease()
                   && (oldX != 0 || oldY != 0 || oldZoom != 256);
+    memcpy(oldContext, sMoveCamera.contextWeight, sizeof(oldContext));
+    memcpy(oldActor, sMoveCamera.actorSprite, sizeof(oldActor));
+    memcpy(oldImages, sMoveCamera.actorImages, sizeof(oldImages));
     BattleCamera_Cancel();
     if (!BATTLE_CAMERA_DEMO || !sSceneReady || !gMain.inBattle || !gBattleSpritesDataPtr
         || !gBattleSpritesDataPtr->battlerData || !gBattleSpritesDataPtr->healthBoxesData
@@ -826,6 +909,11 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
         sCamera.zoom = oldZoom;
         sMoveBlend = sHandoffStartBlend = oldBlend;
         sHandoffTick = 0;
+        if (sMoveCamera.profile != MOVE_CAMERA_EMBER)
+            for (i = 0; i < gBattlersCount; i++)
+                if ((oldActorMask & (1u << i)) && oldActor[i] == sMoveCamera.actorSprite[i]
+                    && oldImages[i] == sMoveCamera.actorImages[i])
+                    sMoveCamera.contextWeight[i] = oldContext[i];
     }
     SetMoveGoal((sMoveCamera.profile == MOVE_CAMERA_EMBER
                  || sMoveCamera.framing == BW2_FRAME_USER || sMoveCamera.framing == BW2_FRAME_TRAVEL)
@@ -838,6 +926,13 @@ static void ClampMoveFraming(void)
     u32 i;
     s32 zoom;
     s32 margin = BATTLE_CAMERA_FRAMING_MARGIN;
+    u8 sharedMask = sMoveCamera.focusMask;
+    if (!sharedMask || sMoveCamera.profile == MOVE_CAMERA_EMBER || HasMonBgActors())
+        sharedMask = sMoveCamera.actorMask;
+    else
+        for (i = 0; i < gBattlersCount; i++)
+            if ((sMoveCamera.actorMask & (1u << i)) && HasNearbyVfx(i))
+                sharedMask |= 1u << i;
     // Rotated/scaled image extents are unknown: do not add camera zoom.
     if (sMoveCamera.affineBounds)
         sCamera.targetZoom = 256;
@@ -855,7 +950,8 @@ static void ClampMoveFraming(void)
             }
             if (HasUncertainBounds(sprite))
                 sCamera.targetZoom = 256;
-            room = max(0, sprite->x + sprite->x2 - sMoveCamera.halfWidth[i] - margin);
+            room = max(0, sprite->x + sprite->x2 - sMoveCamera.halfWidth[i]
+                       - ((sharedMask & (1u << i)) ? margin : 0));
             sCamera.targetX = min(sCamera.targetX, room * 256);
         }
     // At most33 candidates *4 actors, only when a goal changes, not per frame.
@@ -867,12 +963,18 @@ static void ClampMoveFraming(void)
             {
                 const struct Sprite *sprite = &gSprites[sMoveCamera.actorSprite[i]];
                 s32 x = sprite->x + sprite->x2 - sCamera.targetX / 256;
-                s32 y = BATTLE_CAMERA_HORIZON
-                      + ((sprite->y + sprite->y2 - BATTLE_CAMERA_HORIZON) * 256 - sCamera.targetY) * zoom / 65536;
-                s32 halfWidth = (sMoveCamera.halfWidth[i] * zoom + 255) / 256;
-                s32 halfHeight = (sMoveCamera.halfHeight[i] * zoom + 255) / 256;
-                if (x - halfWidth < margin || x + halfWidth >= DISPLAY_WIDTH - margin
-                    || y - halfHeight < margin || y + halfHeight >= DISPLAY_HEIGHT - margin)
+                s32 scale = (sharedMask & (1u << i)) ? zoom : QuietScale(zoom);
+                s32 actorMargin = (sharedMask & (1u << i)) ? margin : 0;
+                s32 anchorY = GetBattlerSpriteCoord(i, BATTLER_COORD_Y) + MON_PIC_HEIGHT / 2
+                            + (GetBattlerSide(i) == B_SIDE_PLAYER ? 8 : 0);
+                s32 y = BATTLE_CAMERA_HORIZON + ((anchorY - BATTLE_CAMERA_HORIZON) * 256 - sCamera.targetY) * zoom / 65536
+                      + (sprite->y + sprite->y2 - anchorY) * scale / 256;
+                if (sMoveCamera.profile == MOVE_CAMERA_EMBER)
+                    y = BATTLE_CAMERA_HORIZON + ((sprite->y + sprite->y2 - BATTLE_CAMERA_HORIZON) * 256 - sCamera.targetY) * zoom / 65536;
+                s32 halfWidth = (sMoveCamera.halfWidth[i] * scale + 255) / 256;
+                s32 halfHeight = (sMoveCamera.halfHeight[i] * scale + 255) / 256;
+                if (x - halfWidth < actorMargin || x + halfWidth >= DISPLAY_WIDTH - actorMargin
+                    || y - halfHeight < actorMargin || y + halfHeight >= DISPLAY_HEIGHT - actorMargin)
                     fits = FALSE;
             }
         if (fits)
@@ -889,11 +991,42 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
     sCamera.startZoom = sCamera.zoom;
     sCamera.targetX = sCamera.targetY = 0;
     sCamera.targetZoom = 256;
+    if (sMoveCamera.phase != CAMERA_PHASE_RETURN)
+        sMoveCamera.focusMask = focus < gBattlersCount ? 1u << focus : 0;
     if (sMoveCamera.profile == MOVE_CAMERA_GROUP && sMoveCamera.phase != CAMERA_PHASE_RETURN)
     {
-        // A small common pan keeps all targets together; no extra zoom.
-        sCamera.targetX = BATTLE_CAMERA_FIELD_PAN_X * 256;
-        sCamera.targetY = -256;
+        u32 i, count = 0, nearCount = 0;
+        s32 x = 0, y = 0;
+        sMoveCamera.focusMask = sMoveCamera.targetMask & sMoveCamera.actorMask;
+        for (i = 0; i < gBattlersCount; i++)
+            if (sMoveCamera.focusMask & (1u << i))
+            {
+                x += gSprites[sMoveCamera.actorSprite[i]].x;
+                y += GetBattlerSpriteCoord(i, BATTLER_COORD_Y);
+                if (GetBattlerSide(i) == B_SIDE_PLAYER)
+                    nearCount++;
+                count++;
+            }
+        if (count)
+        {
+            x /= (s32)count;
+            y /= (s32)count;
+            sCamera.targetX = max(0, min(BATTLE_CAMERA_MOVE_PAN_X * 256,
+                              (x - BATTLE_CAMERA_FOCUS_LEFT_X) * BATTLE_CAMERA_MOVE_PAN_X * 256 / BATTLE_CAMERA_FOCUS_SPAN_X));
+            sCamera.targetZoom = 256 + (count == 1 ? BATTLE_CAMERA_TARGET_ZOOM_DELTA : BATTLE_CAMERA_GROUP_ZOOM_DELTA);
+            sCamera.targetY = (y - BATTLE_CAMERA_MIDGROUND_Y) * BATTLE_CAMERA_MAX_PAN_Y * 256
+                            / (BATTLE_CAMERA_NEAR_CONTACT - BATTLE_CAMERA_HORIZON);
+            if (nearCount == count)
+                sCamera.targetY = (y - BATTLE_CAMERA_HORIZON) * (sCamera.targetZoom - 256) * 256 / sCamera.targetZoom;
+            sCamera.targetY = max(-BATTLE_CAMERA_MAX_PAN_Y * 256, min(BATTLE_CAMERA_MAX_PAN_Y * 256, sCamera.targetY));
+        }
+        else
+        {
+            sCamera.targetX = BATTLE_CAMERA_FIELD_PAN_X * 256;
+            sCamera.targetY = -256;
+        }
+        if (HasMonBgActors())
+            sCamera.targetZoom = 256;
         ClampMoveFraming();
     }
     else if (focus < gBattlersCount && VisibleMoveBattler(focus))
@@ -906,6 +1039,15 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
                             (BATTLE_CAMERA_NEAR_CONTACT - y) * BATTLE_CAMERA_MAX_PAN_Y * 256
                             / (BATTLE_CAMERA_NEAR_CONTACT - BATTLE_CAMERA_HORIZON)));
         sCamera.targetZoom = 256 + min(zoom, BATTLE_CAMERA_MAX_ZOOM - 256);
+        if (sMoveCamera.profile != MOVE_CAMERA_EMBER)
+        {
+            if (zoom)
+                sCamera.targetZoom = 256 + min(BATTLE_CAMERA_TARGET_ZOOM_DELTA,
+                    zoom + max(0, BATTLE_CAMERA_TARGET_ZOOM_DELTA - BATTLE_CAMERA_MOVE_ZOOM_DELTA));
+            if (GetBattlerSide(focus) == B_SIDE_PLAYER)
+                sCamera.targetY = min(BATTLE_CAMERA_MAX_PAN_Y * 256,
+                    max(0, (y - BATTLE_CAMERA_HORIZON) * (sCamera.targetZoom - 256) * 256 / sCamera.targetZoom));
+        }
         ClampMoveFraming();
     }
     sMoveCamera.easing = sMoveCamera.phase == CAMERA_PHASE_RETURN ? BATTLE_CAMERA_RETURN_EASING

@@ -207,3 +207,19 @@ Native tests cover target hold, event-only acquisition, no reset on repeat,
 BG1/BG2 hidden actors, cleared bindings, smooth return and Ember preservation.
 Read reports/bw2-move-camera-resynchronization.md in the parent workspace for
 current source references, evidence and pending emulator validation.
+
+## Target-dependent prototype composition (2026-11-07)
+
+Spread/group focus now derives from the actual target mask/centroid, not a fixed
+field pan. Near/player framing admits positive vertical movement within guards;
+far/opponent framing remains distinct. Single and group zoom budgets differ.
+Quiet uninvolved images/shadows receive eased reduced extra zoom around their
+shared contact; nearby VFX/local affine/movement protect the common transform.
+Mon-as-BG and Ember keep the shared model. Compatible handoffs retain context
+weights for the same actors instead of resetting them every move.
+
+Native cases include both directions of Growl, actual doubles positions/masks,
+individual near slots, selective context scaling/VFX restoration and positive-Y
+source coverage. Both presets pass. Bounds can still reduce matching camera
+goals, especially near-left64px sprites. Parent report:
+reports/faux3d-target-composition.md. Emulator appearance remains unverified.
