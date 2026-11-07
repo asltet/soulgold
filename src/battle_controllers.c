@@ -1,5 +1,6 @@
 #include "global.h"
 #include "battle.h"
+#include "battle_camera.h"
 #include "battle_ai_main.h"
 #include "battle_ai_util.h"
 #include "battle_anim.h"
@@ -2250,6 +2251,7 @@ static void Controller_HitAnimation(enum BattlerId battler)
     {
         gSprites[spriteId].data[1] = 0;
         gSprites[spriteId].invisible = FALSE;
+        BattleCamera_OnHitReaction(battler, FALSE);
         gDoingBattleAnim = FALSE;
         BtlController_Complete(battler);
     }
@@ -2679,6 +2681,7 @@ void BtlController_HandleHealthBarUpdate(enum BattlerId battler)
     s16 hpVal;
     struct Pokemon *mon = GetBattlerMon(battler);
 
+    BattleCamera_OnHealthbar(battler);
     LoadBattleBarGfx(0);
     hpVal = gBattleResources->bufferA[battler][2] | (gBattleResources->bufferA[battler][3] << 8);
     maxHP = GetMonData(mon, MON_DATA_MAX_HP);
@@ -2744,6 +2747,7 @@ void BtlController_HandleHitAnimation(enum BattlerId battler)
     }
     else
     {
+        BattleCamera_OnHitReaction(battler, TRUE);
         gDoingBattleAnim = TRUE;
         gSprites[gBattlerSpriteIds[battler]].data[1] = 0;
         DoHitAnimHealthboxEffect(battler);

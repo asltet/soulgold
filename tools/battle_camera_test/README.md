@@ -223,3 +223,19 @@ individual near slots, selective context scaling/VFX restoration and positive-Y
 source coverage. Both presets pass. Bounds can still reduce matching camera
 goals, especially near-left64px sprites. Parent report:
 reports/faux3d-target-composition.md. Emulator appearance remains unverified.
+
+## Action completion, target reactions and HP bars (2026-11-07)
+
+Visual script end no longer releases the shot. Normal battle action FINISHED,
+all controller flags clear and animation idle release it with a minimum44-update
+smootherstep return. Known stat/status reactions retain the original camera;
+known hit blink permits temporary authored invisibility, and a tracked0-HP
+image can remain while its bar finishes. Switching/disappearance/unsafe owners
+still cancel. Healthbar/reaction progress resets camera-only watchdog age.
+
+Native callers now use BattleCamera_FinishAction after simulated action/controller
+completion. New tests cover blink, stat/status, extended busy HP bar, ignored
+early finish, slower return, zero-HP hold and special-animation cancellation.
+Direct debug users outside the normal turn loop must notify action completion.
+See parent reports/faux3d-action-completion.md.44 is logical updates, not an
+emulator-measured wall-clock duration; no gameplay waits/tasks were added.

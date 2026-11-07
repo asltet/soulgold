@@ -121,11 +121,11 @@ struct MoveCameraOverride
 };
 struct MoveCameraState
 {
-    bool8 active, blocked, impactSeen;
+    bool8 active, blocked, impactSeen, actionComplete;
     bool8 generic, suspended;
     bool8 visualSeen, targetAcquired;
     u8 framing, bgLayer[MAX_BATTLERS_COUNT];
-    u8 focusMask;
+    u8 focusMask, hitReactionMask;
     u16 contextWeight[MAX_BATTLERS_COUNT];
     u16 move;
     u8 targetType;
@@ -741,11 +741,15 @@ s16 BattleCamera_GetBgY(void) { return HasScanlineLease() ? (sRows[0] >> 16) & 0
 static bool32 VisibleMoveBattler(u8 battler)
 {
     u8 sprite;
-    if (battler >= gBattlersCount || (gAbsentBattlerFlags & (1u << battler)) || !gBattleMons[battler].hp)
+    if (battler >= gBattlersCount || (gAbsentBattlerFlags & (1u << battler)))
+        return FALSE;
+    // Damage may set HP to0 before the still-visible actor's health bar drains.
+    if (!gBattleMons[battler].hp && !(sMoveCamera.active && (sMoveCamera.actorMask & (1u << battler))))
         return FALSE;
     sprite = gBattlerSpriteIds[battler];
     return sprite < MAX_SPRITES && gSprites[sprite].inUse
-        && (!gSprites[sprite].invisible || (sMoveCamera.active && sMoveCamera.bgLayer[battler]))
+        && (!gSprites[sprite].invisible || (sMoveCamera.active && (sMoveCamera.bgLayer[battler]
+            || (!sMoveCamera.actionComplete && (sMoveCamera.hitReactionMask & (1u << battler))))))
         && gSprites[sprite].oam.affineMode != ST_OAM_AFFINE_ERASE;
 }
 
@@ -1058,7 +1062,7 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
 
 static void EndMoveNow(void)
 {
-    if (!sMoveCamera.active)
+    if (!sMoveCamera.active || !sMoveCamera.actionComplete || gAnimScriptActive || gBattleControllerExecFlags)
         return;
     if (sMoveCamera.blocked)
     {
@@ -1068,7 +1072,7 @@ static void EndMoveNow(void)
     if (sMoveCamera.phase != CAMERA_PHASE_RETURN)
     {
         sMoveCamera.phase = CAMERA_PHASE_RETURN;
-        SetMoveGoal(MAX_BATTLERS_COUNT, sMoveProfiles[sMoveCamera.profile].restore, 0);
+        SetMoveGoal(MAX_BATTLERS_COUNT, max(BATTLE_CAMERA_RETURN_TICKS, sMoveProfiles[sMoveCamera.profile].restore), 0);
     }
 }
 
@@ -1080,6 +1084,51 @@ void BattleCamera_StartMove(u16 move, u8 attacker, u8 target, u8 targetType, con
     sMoveRequest.targetType = targetType;
     sMoveRequest.script = script;
     sMoveRequest.event = CAMERA_EVENT_START;
+}
+
+void BattleCamera_FinishAction(void)
+{
+    if (sMoveCamera.active && !sMoveCamera.actionComplete && !gAnimScriptActive && gBattleControllerExecFlags == 0)
+    {
+        sMoveCamera.actionComplete = TRUE;
+        sMoveCamera.age = 0; // Confirmed completion is progress, not a stalled context.
+    }
+}
+
+void BattleCamera_OnAnimationLaunch(u8 type, u16 animation, u8 battler)
+{
+    bool32 reaction = (type == ANIM_TYPE_STATUS && animation < NUM_B_ANIMS_STATUS)
+                   || (type == ANIM_TYPE_GENERAL && animation == B_ANIM_STATS_CHANGE);
+    if (reaction && sMoveCamera.active && !sMoveCamera.actionComplete
+        && battler < gBattlersCount && (sMoveCamera.actorMask & (1u << battler))
+        && gBattlerSpriteIds[battler] == sMoveCamera.actorSprite[battler]
+        && gSprites[sMoveCamera.actorSprite[battler]].images == sMoveCamera.actorImages[battler])
+    {
+        sMoveCamera.age = 0;
+        return; // Continue the original shot; these effects are part of the move.
+    }
+    BattleCamera_InterruptAnimation();
+}
+
+void BattleCamera_OnHitReaction(u8 battler, bool8 active)
+{
+    if (battler >= gBattlersCount)
+        return;
+    if (!active)
+        sMoveCamera.hitReactionMask &= ~(1u << battler);
+    else if (sMoveCamera.active && !sMoveCamera.actionComplete && (sMoveCamera.actorMask & (1u << battler))
+             && gBattlerSpriteIds[battler] == sMoveCamera.actorSprite[battler])
+    {
+        sMoveCamera.hitReactionMask |= 1u << battler;
+        sMoveCamera.age = 0;
+    }
+}
+
+void BattleCamera_OnHealthbar(u8 battler)
+{
+    if (sMoveCamera.active && !sMoveCamera.actionComplete && battler < gBattlersCount
+        && (sMoveCamera.actorMask & (1u << battler)))
+        sMoveCamera.age = 0;
 }
 
 void BattleCamera_InterruptAnimation(void)

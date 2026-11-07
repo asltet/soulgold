@@ -334,7 +334,7 @@ void LaunchBattleAnimation(u32 animType, u32 animId)
 {
     s32 i;
 
-    BattleCamera_InterruptAnimation();
+    BattleCamera_OnAnimationLaunch(animType, animId, gBattleAnimAttacker);
 
     if (gTestRunnerEnabled)
     {

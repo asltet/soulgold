@@ -23,6 +23,7 @@ u8 gBattlerPositions[MAX_BATTLERS_COUNT];
 u8 gBattlerSpriteIds[MAX_BATTLERS_COUNT];
 u32 gBattleTypeFlags;
 u8 gAbsentBattlerFlags;
+u32 gBattleControllerExecFlags;
 struct BattlePokemon gBattleMons[MAX_BATTLERS_COUNT];
 const u8 gBattleAnimMove_Headbutt[] = {1};
 const u8 gBattleAnimMove_Peck[] = {2};
@@ -508,7 +509,8 @@ static void FinishTestMove(void)
     u32 i;
     BattleCamera_EndMove();
     gAnimScriptActive = FALSE;
-    for (i = 0; i < 64; i++) Tick(0);
+    BattleCamera_FinishAction();
+    for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS + 4; i++) Tick(0);
     assert(!sMoveCamera.active && !sCamera.active && !sOwnsScanlines);
     assert(sCamera.x == 0 && sCamera.y == 0 && sCamera.zoom == 256);
 }
@@ -581,6 +583,7 @@ static void TestMoveCamera(void)
     for (i = 0; i < 12; i++) Tick(0);
     BattleCamera_EndMove();
     gAnimScriptActive = FALSE;
+    BattleCamera_FinishAction();
     Tick(0);
     assert(sMoveCamera.phase == CAMERA_PHASE_RETURN);
     StartTestMove(MOVE_EMBER, 1, 0, TARGET_SELECTED, gBattleAnimMove_Ember);
@@ -741,7 +744,13 @@ static void TestMoveCamera(void)
     StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
     Tick(0);
     gBattleMons[1].hp = 0;
+    for (i = 0; i < 20; i++) Tick(0);
+    assert(sMoveCamera.active); // Visible KO target may still have a draining bar.
+    gAnimScriptActive = FALSE;
+    BattleCamera_FinishAction();
     Tick(0);
+    assert(sMoveCamera.phase == CAMERA_PHASE_RETURN); // Zero HP alone must not snap the visible scene.
+    for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS; i++) Tick(0);
     assert(!sMoveCamera.active);
     gBattleMons[1].hp = 100;
     StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
@@ -765,7 +774,8 @@ static void TestMoveCamera(void)
     StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
     for (i = 0; i < 12; i++) Tick(0);
     gAnimScriptActive = FALSE;
-    for (i = 0; i < 24; i++) Tick(0);
+    BattleCamera_FinishAction();
+    for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS + 4; i++) Tick(0);
     assert(!sMoveCamera.active);
     StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
     Tick(0);
@@ -811,14 +821,15 @@ static void TestMoveCamera(void)
     memcpy(sOriginal, gSprites, sizeof(sOriginal));
     gAnimScriptActive = TRUE;
     BattleCamera_StartMove(MOVE_WITHDRAW, 0, 0, TARGET_USER, gBattleAnimMove_Withdraw);
-    for (i = 0; i < 28; i++)
+    for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS; i++)
     {
         Tick(1u << 7);
         assert(gOamMatrices[7].b == -256 && gOamMatrices[7].c == 256);
     }
     BattleCamera_EndMove();
     gAnimScriptActive = FALSE;
-    for (i = 0; i < 40; i++) Tick(1u << 7);
+    BattleCamera_FinishAction();
+    for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS + 4; i++) Tick(1u << 7);
     assert(!sMoveCamera.active && sAllocated == (1u << 7));
     gSprites[0].oam.affineMode = ST_OAM_AFFINE_OFF;
     gSprites[0].oam.matrixNum = 0;
@@ -904,9 +915,10 @@ static void TestMoveCamera(void)
     assert(sMoveCamera.phase == CAMERA_PHASE_ATTACK_PRESENTATION && sCamera.x > 0);
     BattleCamera_EndMove();
     gAnimScriptActive = FALSE;
+    BattleCamera_FinishAction();
     {
         s16 previous = sCamera.x;
-        for (i = 0; i < 28; i++)
+        for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS; i++)
         {
             Tick(0);
             assert(sCamera.x <= previous && previous - sCamera.x <= 512);
@@ -1001,6 +1013,60 @@ static void TestMoveCamera(void)
     assert(!sMoveCamera.active && gScanlineEffect.state == 1);
     ScanlineEffect_Stop();
     Ready();
+    // Whole-action ownership: visual end is not stat/status/HP completion.
+    StartTestMove(MOVE_GROWL, 0, 1, TARGET_BOTH, gBattleAnimMove_Growl);
+    for (i = 0; i < 40; i++) Tick(0);
+    BattleCamera_EndMove();
+    gAnimScriptActive = FALSE;
+    for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS + 8; i++) Tick(0);
+    assert(sMoveCamera.active && sMoveCamera.phase != CAMERA_PHASE_RETURN);
+    {
+        struct BattleCamera held = sCamera;
+        gBattleControllerExecFlags = 2;
+        BattleCamera_OnHitReaction(1, TRUE);
+        for (i = 0; i < 32; i++)
+        {
+            gSprites[gBattlerSpriteIds[1]].invisible = (i / 4) & 1;
+            memcpy(sOriginal, gSprites, sizeof(sOriginal));
+            Tick(0);
+            assert(sMoveCamera.active && sCamera.x == held.x);
+        }
+        gSprites[gBattlerSpriteIds[1]].invisible = FALSE;
+        BattleCamera_OnHitReaction(1, FALSE);
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        gBattleControllerExecFlags = 0;
+        BattleCamera_OnAnimationLaunch(ANIM_TYPE_GENERAL, B_ANIM_STATS_CHANGE, 1);
+        gAnimScriptActive = TRUE;
+        for (i = 0; i < 30; i++) Tick(0);
+        assert(sMoveCamera.active && sCamera.x == held.x && sCamera.y == held.y && sCamera.zoom == held.zoom);
+        BattleCamera_EndMove();
+        gAnimScriptActive = FALSE;
+        BattleCamera_OnAnimationLaunch(ANIM_TYPE_STATUS, B_ANIM_STATUS_PRZ, 1);
+        gAnimScriptActive = TRUE;
+        for (i = 0; i < 30; i++) Tick(0);
+        assert(sMoveCamera.active && sCamera.x == held.x && sCamera.zoom == held.zoom);
+        BattleCamera_EndMove();
+        gAnimScriptActive = FALSE;
+        gBattleControllerExecFlags = 2; // Target HP bar still being animated.
+        BattleCamera_OnHealthbar(1);
+        BattleCamera_FinishAction(); // Early callers cannot release a busy controller.
+        assert(!sMoveCamera.actionComplete);
+        for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS + 20; i++) Tick(0);
+        assert(sMoveCamera.active && sCamera.x == held.x && sMoveCamera.phase != CAMERA_PHASE_RETURN);
+        gBattleControllerExecFlags = 0;
+        BattleCamera_FinishAction();
+        Tick(0);
+        assert(sMoveCamera.phase == CAMERA_PHASE_RETURN && sMoveCamera.duration >= BATTLE_CAMERA_RETURN_TICKS);
+        for (i = 0; i < BATTLE_CAMERA_RETURN_TICKS; i++) Tick(0);
+        assert(!sMoveCamera.active && !sOwnsScanlines);
+    }
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    BattleCamera_OnAnimationLaunch(ANIM_TYPE_SPECIAL, 0, 1);
+    Tick(0);
+    assert(!sMoveCamera.active); // Switching/other special ownership still cancels.
+    gAnimScriptActive = FALSE;
+    puts("PASS: action hold through stats/status/HP controllers, gated finish, slower smooth return");
+
     // Target-side composition, real double coordinates, and VFX-aware context.
     {
         struct Sprite saved[MAX_SPRITES + 1];

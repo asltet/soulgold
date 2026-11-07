@@ -5804,6 +5804,10 @@ static void RunTurnActionsFunctions(void)
         }
     }
 
+    // TRY_FINISH can still dispatch faint/ability reactions. Release only once
+    // those finish and every controller (including HP bars) has acknowledged.
+    if (gCurrentActionFuncId == B_ACTION_FINISHED && gBattleControllerExecFlags == 0 && !gAnimScriptActive)
+        BattleCamera_FinishAction();
     gBattleStruct->savedTurnActionNumber = gCurrentTurnActionNumber;
     sTurnActionsFuncsTable[gCurrentActionFuncId]();
 

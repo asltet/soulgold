@@ -6,6 +6,7 @@
 #define BATTLE_CAMERA_DEMO TRUE
 #define BATTLE_CAMERA_MAX_SCENE_SPRITES 24
 #define BATTLE_CAMERA_MOVE_MAX_TICKS 1200
+#define BATTLE_CAMERA_RETURN_TICKS 44
 #define BATTLE_CAMERA_FIELD_PAN_X 4
 #define BATTLE_CAMERA_TARGET_ZOOM_DELTA 28
 #define BATTLE_CAMERA_GROUP_ZOOM_DELTA 12
@@ -140,6 +141,10 @@
 #error Invalid context emphasis settings
 #endif
 
+#if BATTLE_CAMERA_RETURN_TICKS < 1 || BATTLE_CAMERA_RETURN_TICKS > 120
+#error Invalid action camera return duration
+#endif
+
 enum BattleCameraMovePhase
 {
     CAMERA_PHASE_NEUTRAL,
@@ -152,6 +157,10 @@ enum BattleCameraMovePhase
 
 void BattleCamera_StartMove(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script);
 void BattleCamera_EndMove(void);
+void BattleCamera_FinishAction(void);
+void BattleCamera_OnAnimationLaunch(u8 type, u16 animation, u8 battler);
+void BattleCamera_OnHealthbar(u8 battler);
+void BattleCamera_OnHitReaction(u8 battler, bool8 active);
 void BattleCamera_InterruptAnimation(void);
 void BattleCamera_OnSpriteCreated(u8 spriteId, u16 tileTag);
 void BattleCamera_BlockMove(void);
