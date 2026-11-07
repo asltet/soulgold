@@ -15,9 +15,25 @@ struct BattleCamera
 {
     s16 x, y, zoom;
     s16 targetX, targetY, targetZoom;
+    s16 startX, startY, startZoom;
     u16 frame;
+    u8 track, leg;
     bool8 active;
 };
+
+struct CameraKey
+{
+    u16 duration;
+    u16 x, y, zoom;
+};
+
+struct CameraTrack
+{
+    const struct CameraKey *keys;
+    u8 count;
+};
+
+#include "data/battle_camera_tracks.h"
 
 struct CameraSpriteBackup
 {
@@ -31,6 +47,8 @@ static EWRAM_DATA struct CameraSpriteBackup sBackups[MAX_BATTLERS_COUNT * 3] = {
 static EWRAM_DATA u8 sBackupCount = 0;
 static EWRAM_DATA u16 sIdleFrames = 0;
 static EWRAM_DATA u16 sWaitTicks = 0;
+static EWRAM_DATA u8 sLastTrack = 0;
+static EWRAM_DATA u32 sVisualRandom = 0;
 static EWRAM_DATA bool8 sSceneReady = FALSE;
 static EWRAM_DATA bool8 sOwnsScanlines = FALSE;
 static EWRAM_DATA u32 sScanlineGeneration = 0;
@@ -63,6 +81,8 @@ void BattleCamera_Reset(void)
 {
     BattleCamera_Cancel();
     sSceneReady = FALSE;
+    sLastTrack = 0xFF;
+    sVisualRandom = gMain.vblankCounter1 ^ 0x6D2B79F5;
 }
 
 void BattleCamera_SetEnvironment(u16 environment)
@@ -72,13 +92,59 @@ void BattleCamera_SetEnvironment(u16 environment)
     sSceneReady = environment < BATTLE_ENVIRONMENT_COUNT;
 }
 
-static s16 Ease(s16 destination, u16 frame)
+static s16 Ease(s16 destination, u16 frame, u16 duration)
 {
-    s32 t = frame * 256 / BATTLE_CAMERA_MOVE_TICKS;
+    s32 t = frame * 256 / duration;
     s32 weight = t;
     if (BATTLE_CAMERA_EASING == BATTLE_CAMERA_EASING_SMOOTHSTEP)
         weight = t * t * (768 - 2 * t) / 65536;
     return destination * weight / 256;
+}
+
+// Private cosmetic PRNG: never consume battle/encounter RNG for camera shots.
+static u8 PickTrack(void)
+{
+    u32 value = sVisualRandom ? sVisualRandom : 0x6D2B79F5;
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    sVisualRandom = value;
+    if (sLastTrack >= ARRAY_COUNT(sIdleTracks))
+        return value % ARRAY_COUNT(sIdleTracks);
+    return (sLastTrack + 1 + value % (ARRAY_COUNT(sIdleTracks) - 1)) % ARRAY_COUNT(sIdleTracks);
+}
+
+static void BeginLeg(void)
+{
+    const struct CameraKey *key = &sIdleTracks[sCamera.track].keys[sCamera.leg];
+    sCamera.startX = sCamera.x;
+    sCamera.startY = sCamera.y;
+    sCamera.startZoom = sCamera.zoom;
+    sCamera.targetX = BATTLE_CAMERA_MAX_PAN_X * key->x;
+    sCamera.targetY = -BATTLE_CAMERA_MAX_PAN_Y * key->y;
+    sCamera.targetZoom = 256 + (BATTLE_CAMERA_MAX_ZOOM - 256) * key->zoom / 256;
+    sCamera.frame = 0;
+}
+
+static bool32 AdvanceTrack(void)
+{
+    const struct CameraTrack *track = &sIdleTracks[sCamera.track];
+    if (sCamera.frame == track->keys[sCamera.leg].duration)
+    {
+        if (++sCamera.leg == track->count)
+        {
+            BattleCamera_Cancel();
+            // BW2 stays in PLAY after the initial wait: no fresh periodic delay.
+            sWaitTicks = 0;
+            return FALSE;
+        }
+        BeginLeg();
+    }
+    sCamera.frame++;
+    sCamera.x = sCamera.startX + Ease(sCamera.targetX - sCamera.startX, sCamera.frame, track->keys[sCamera.leg].duration);
+    sCamera.y = sCamera.startY + Ease(sCamera.targetY - sCamera.startY, sCamera.frame, track->keys[sCamera.leg].duration);
+    sCamera.zoom = sCamera.startZoom + Ease(sCamera.targetZoom - sCamera.startZoom, sCamera.frame, track->keys[sCamera.leg].duration);
+    return TRUE;
 }
 
 static s32 DepthWeight(s32 sourceY)
@@ -193,9 +259,6 @@ static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
 void BattleCamera_BeginFrame(void)
 {
     u32 battler;
-    u16 frame;
-    const u16 returnStart = BATTLE_CAMERA_MOVE_TICKS + BATTLE_CAMERA_HOLD_TICKS;
-    const u16 end = 2 * BATTLE_CAMERA_MOVE_TICKS + BATTLE_CAMERA_HOLD_TICKS;
 
     if (!BATTLE_CAMERA_DEMO || !sSceneReady || !gMain.inBattle || !gBattleSpritesDataPtr
         || (gBattlersCount < 2 || gBattlersCount > MAX_BATTLERS_COUNT) || !InBattleChoosingMoves() || gPaletteFade.active
@@ -210,33 +273,27 @@ void BattleCamera_BeginFrame(void)
         BattleCamera_Cancel();
         return;
     }
-    if (!sCamera.active && ++sIdleFrames >= sWaitTicks)
+    if (!sCamera.active)
     {
-        BattleCamera_Cancel();
-        sCamera.targetX = BATTLE_CAMERA_MAX_PAN_X * 256;
-        sCamera.targetY = -BATTLE_CAMERA_MAX_PAN_Y * 256;
-        sCamera.targetZoom = BATTLE_CAMERA_MAX_ZOOM;
-        if (!BuildRows() || !AcquireScanlines())
+        // Match BW2's threshold comparison: N waits, then try on update N+1.
+        if (sIdleFrames < sWaitTicks)
         {
-            BattleCamera_Cancel();
+            sIdleFrames++;
             return;
         }
+        // Keep READY while another effect owns the renderer. Do not re-wait.
+        if (gScanlineEffect.state != 0 || gScanlineEffect.waveTaskId != TASK_NONE)
+            return;
+        if (!BuildRows() || !AcquireScanlines())
+            return;
+        sCamera.track = PickTrack();
+        sLastTrack = sCamera.track;
+        sCamera.leg = 0;
         sCamera.active = TRUE;
+        BeginLeg();
     }
-    if (!sCamera.active)
+    if (!AdvanceTrack())
         return;
-    frame = sCamera.frame++;
-    if (frame >= end)
-    {
-        BattleCamera_Cancel();
-        sWaitTicks = BATTLE_CAMERA_REPEAT_TICKS;
-        return;
-    }
-    frame = frame < BATTLE_CAMERA_MOVE_TICKS ? frame
-          : frame < returnStart ? BATTLE_CAMERA_MOVE_TICKS : end - frame;
-    sCamera.x = Ease(sCamera.targetX, frame);
-    sCamera.y = Ease(sCamera.targetY, frame);
-    sCamera.zoom = 256 + Ease(sCamera.targetZoom - 256, frame);
     if (!BuildRows())
         goto cancel;
     for (battler = 0; battler < gBattlersCount; battler++)

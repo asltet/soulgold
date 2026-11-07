@@ -46,7 +46,8 @@ neutral fallback for unprepared terrain, whole-shot rollback under partial
 matrix exhaustion, exclusive scanline admission, different/same-parameter
 ownership replacement, and interrupted VBlank publication. DMA registers,
 actual scanline timing, rendering seams and clipping still need emulator tests.
-Runtime camera tuning lives only in `include/battle_camera.h`.
+Renderer limits live in `include/battle_camera.h`; current choreography lives in
+`src/data/battle_camera_tracks.h`.
 
 ## Wild/trainer coverage correction
 
@@ -66,12 +67,26 @@ The native fixture now covers every environment ID, wild/trainer/link/Frontier/
 recorded flags, two/four battlers, and retry after an initially busy scanline
 owner releases its resource. Visual platform/seam checks remain necessary.
 
-## Recurring idle camera
+## BW2-style idle scheduling (current)
 
-The once-per-battle latch is removed. The shot repeats during action selection,
-with `BATTLE_CAMERA_REPEAT_TICKS` (default90) neutral ticks between completed
-passes. On returning after attacks/switches/menus, the existing initial wait
-(default30 ticks) applies. Cancellation still releases the scanline lease;
-no resources are held through the neutral pause. The native test checks two
-cycles and their exact configured repeat interval, plus resumption after leaving
-action selection. Move-triggered camera choreography is still separate work.
+See the parent workspace reports `bw2-idle-camera-behavior.md` (verified DS
+source) and `soulgold-bw2-idle-policy.md` (GBA implementation).
+
+`BATTLE_CAMERA_WAIT_TICKS` in `include/battle_camera.h` now defaults to900,
+matching the normal BW2 initial idle threshold. Wait900 eligible menu updates;
+selection can start on the next one. There is no invented90-tick repeat pause.
+Once ready, completed tracks allow another nonconsecutive choice. A busy
+scanline owner delays admission without restarting the elapsed wait.
+
+Six authored GBA tracks live in `src/data/battle_camera_tracks.h`. Keys contain
+explicit update duration and0..256 fractions of the existing renderer envelope.
+They approximate the referenced DS scripts' choreography, not their world poses,
+braking algorithm or exact runtime timing. Private cosmetic RNG does not consume
+battle RNG. Menu exit/incompatible presentation cancels and rearms the initial
+wait; cancellation preserves the last track so it is not immediately repeated.
+
+The native fixture now covers the initial threshold, complete paths and exact
+neutral endpoints of all six tracks, nonrepeating selection, READY after busy
+ownership, next-track continuation without a new delay, restart after
+interruption, affine/row/resource invariants, and all environment/type/doubles
+cases. Emulator visual and performance acceptance remain separate.

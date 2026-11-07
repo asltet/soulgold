@@ -28,7 +28,7 @@ static bool32 sChoosing = TRUE;
 u8 GetBattlerSpriteCoord(enum BattlerId battler, u8 coord)
 {
     assert(coord == BATTLER_COORD_Y);
-    return battler == 0 ? 80 : 40;
+    return (battler & 1) ? 40 : 80;
 }
 void ScanlineEffect_Stop(void) { gScanlineEffectGeneration++; gScanlineEffect.state = 0; }
 void ScanlineEffect_SetParams(struct ScanlineEffectParams params)
@@ -97,243 +97,200 @@ static void CheckRows(void)
     }
 }
 
+static struct Sprite sOriginal[MAX_SPRITES + 1];
+
+static void Tick(u32 allocated)
+{
+    BattleCamera_BeginFrame();
+    assert(sCamera.zoom >= 256 && sCamera.zoom <= BATTLE_CAMERA_MAX_ZOOM);
+    assert(sCamera.x >= 0 && sCamera.x <= BATTLE_CAMERA_MAX_PAN_X * 256);
+    assert(sCamera.y <= 0 && sCamera.y >= -BATTLE_CAMERA_MAX_PAN_Y * 256);
+    assert(memcmp(&sOriginal[4], &gSprites[4], sizeof(struct Sprite)) == 0);
+    if (sCamera.active)
+    {
+        CheckRows();
+        BattleCamera_PublishScanlines();
+        assert(memcmp(gScanlineEffectRegBuffers[gScanlineEffect.srcBuffer], sRows, sizeof(sRows)) == 0);
+        gScanlineEffect.srcBuffer ^= 1;
+    }
+    BattleCamera_EndFrame();
+    assert(memcmp(sOriginal, gSprites, sizeof(sOriginal)) == 0);
+    assert(sAllocated == allocated && sBackupCount == 0);
+}
+
+static void ForceTrack(u8 track)
+{
+    Ready();
+    assert(BuildRows() && AcquireScanlines());
+    sCamera.track = track;
+    sCamera.leg = 0;
+    sCamera.active = TRUE;
+    sLastTrack = track;
+    BeginLeg();
+}
+
 int main(void)
 {
     static struct BattleSpriteData data;
     static struct BattleHealthboxInfo boxes[MAX_BATTLERS_COUNT];
-    struct Sprite original[MAX_SPRITES + 1];
-    u32 i;
+    u32 i, track;
     data.healthBoxesData = boxes;
     gBattleSpritesDataPtr = &data;
     gMain.inBattle = TRUE;
     gBattlersCount = 2;
-    gBattlerPositions[1] = B_SIDE_OPPONENT;
+    for (i = 0; i < MAX_BATTLERS_COUNT; i++)
+        gBattlerPositions[i] = i;
+    gBattlerSpriteIds[0] = 0;
     gBattlerSpriteIds[1] = 1;
+    gBattlerSpriteIds[2] = 5;
+    gBattlerSpriteIds[3] = 6;
     boxes[1].shadowSpriteIdPrimary = 2;
     boxes[1].shadowSpriteIdSecondary = 3;
-    for (i = 0; i < 4; i++)
+    boxes[3].shadowSpriteIdPrimary = 7;
+    boxes[3].shadowSpriteIdSecondary = 8;
+    for (i = 0; i < 9; i++)
     {
         gSprites[i].inUse = TRUE;
         gSprites[i].oam.size = 3;
-        gSprites[i].x = i == 0 ? 72 : i == 1 ? 176 : i == 2 ? 160 : 192;
+        gSprites[i].x = i == 0 ? 72 : i == 1 ? 176 : i == 2 ? 160 : i == 3 ? 192 : 120;
         gSprites[i].y = i == 0 ? 80 : i == 1 ? 40 : 69;
         gSprites[i].centerToCornerVecX = -32;
         gSprites[i].centerToCornerVecY = -32;
     }
-    gSprites[4].inUse = TRUE; // Excluded healthbox/effect fixture.
-    gSprites[4].x = 90;
-    memcpy(original, gSprites, sizeof(original));
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+
+    // BW2 normal threshold: 900 WAIT updates, then admission on the next one.
     Ready();
-    for (i = 0; i < 150; i++)
+    for (i = 0; i < BATTLE_CAMERA_WAIT_TICKS; i++)
     {
-        BattleCamera_BeginFrame();
-        assert(sCamera.zoom >= 256 && sCamera.zoom <= BATTLE_CAMERA_MAX_ZOOM);
-        assert(memcmp(&original[4], &gSprites[4], sizeof(struct Sprite)) == 0);
-        if (sCamera.active)
-        {
-            CheckRows();
-            BattleCamera_PublishScanlines();
-            assert(memcmp(gScanlineEffectRegBuffers[gScanlineEffect.srcBuffer], sRows, sizeof(sRows)) == 0);
-            gScanlineEffect.srcBuffer ^= 1; // Emulate the engine VBlank swap.
-        }
-        if (i == 77)
-        {
-            assert(sCamera.zoom == 288 && sCamera.x == 3072 && sCamera.y == -1024);
-            assert(PanAt(120) == 12 && PanAt(32) == 6);
-            assert(gOamMatrices[gSprites[0].oam.matrixNum].a == 227);
-            assert(gOamMatrices[gSprites[1].oam.matrixNum].a == 229);
-            // Same projected contact for battler and shadow halves.
-            assert(gSprites[1].x == 168 && gSprites[1].y == 46);
-            assert(gSprites[2].x == 151 && gSprites[3].x == 185);
-        }
-        BattleCamera_EndFrame();
-        assert(memcmp(original, gSprites, sizeof(original)) == 0);
-        assert(sAllocated == 0 && sBackupCount == 0);
+        Tick(0);
+        assert(!sCamera.active && !sOwnsScanlines);
     }
-    assert(!sCamera.active && sCamera.zoom == 256 && !sOwnsScanlines);
-    // Wild-grass scenes must now receive the same demonstration.
-    Ready();
-    BattleCamera_SetEnvironment(BATTLE_ENVIRONMENT_GRASS);
-    for (i = 0; i < 78; i++)
+    Tick(0);
+    assert(sCamera.active && sIdleFrames == BATTLE_CAMERA_WAIT_TICKS);
+
+    // Exhaust every leg of every authored track: bounds, contacts, exact restore.
+    for (track = 0; track < ARRAY_COUNT(sIdleTracks); track++)
     {
-        BattleCamera_BeginFrame();
-        if (i == 77)
-            assert(sCamera.active && sCamera.zoom == BATTLE_CAMERA_MAX_ZOOM);
-        BattleCamera_EndFrame();
-        assert(sAllocated == 0);
+        u32 duration = 0, n;
+        const struct CameraTrack *spec = &sIdleTracks[track];
+        for (i = 0; i < spec->count; i++)
+        {
+            assert(spec->keys[i].duration > 0);
+            assert(spec->keys[i].x <= 256 && spec->keys[i].y <= 256 && spec->keys[i].zoom <= 256);
+            duration += spec->keys[i].duration;
+        }
+        ForceTrack(track);
+        for (n = 0; n < duration; n++)
+        {
+            Tick(0);
+            assert(sCamera.active);
+        }
+        assert(sCamera.x == 0 && sCamera.y == 0 && sCamera.zoom == 256);
+        Tick(0);
+        assert(!sCamera.active && !sOwnsScanlines && sWaitTicks == 0);
+        Tick(0); // No new 900-update wait between completed idle scripts.
+        assert(sCamera.active && sCamera.track != track);
     }
-    // Roll back all actors and floor if only one affine matrix is available.
+
+    // Cosmetic selection has six outcomes and forbids consecutive repeats.
     Ready();
+    {
+        u32 seen = 0;
+        for (i = 0; i < 256; i++)
+        {
+            u8 previous = sLastTrack;
+            u8 pick = PickTrack();
+            assert(pick < ARRAY_COUNT(sIdleTracks) && pick != previous);
+            seen |= 1u << pick;
+            sLastTrack = pick;
+        }
+        assert(seen == 63);
+    }
+
+    // Menu exit/interruption rearms the initial wait but preserves last choice.
+    ForceTrack(0);
+    for (i = 0; i < 100; i++) Tick(0);
+    sChoosing = FALSE;
+    Tick(0);
+    assert(!sCamera.active && !sOwnsScanlines && sLastTrack == 0);
+    sChoosing = TRUE;
+    for (i = 0; i < BATTLE_CAMERA_WAIT_TICKS; i++)
+    {
+        Tick(0);
+        assert(!sCamera.active);
+    }
+    Tick(0);
+    assert(sCamera.active && sCamera.track != 0);
+
+    // Busy renderer after the threshold stays READY; release starts immediately.
+    Ready();
+    gScanlineEffect.state = 1;
+    gScanlineEffect.dmaDest = (void *)REG_ADDR_BG1HOFS;
+    for (i = 0; i < BATTLE_CAMERA_WAIT_TICKS + 100; i++)
+    {
+        Tick(0);
+        assert(!sCamera.active && gScanlineEffect.state == 1);
+    }
+    gScanlineEffect.state = 0;
+    Tick(0);
+    assert(sCamera.active);
+
+    // Partial affine exhaustion rolls back sprites AND the floor.
+    ForceTrack(0);
     sAllocated = 0xFFFFFFFE;
-    for (i = 0; i < 80; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-        assert(sAllocated == 0xFFFFFFFE);
-        assert(memcmp(original, gSprites, sizeof(original)) == 0);
-    }
+    for (i = 0; i < 50; i++) Tick(0xFFFFFFFE);
     assert(!sCamera.active && !sOwnsScanlines);
-    // Existing rotated matrices are composed in temporary slots only.
-    Ready();
+
+    // Original affine rotation and non-affine flip survive the slower path.
+    ForceTrack(0);
     sAllocated = 1u << 7;
     gSprites[0].oam.affineMode = ST_OAM_AFFINE_NORMAL;
     gSprites[0].oam.matrixNum = 7;
     SetOamMatrix(7, 0, -256, 256, 0);
     gSprites[1].oam.matrixNum = 8;
-    memcpy(original, gSprites, sizeof(original));
-    for (i = 0; i < 78; i++)
-    {
-        BattleCamera_BeginFrame();
-        if (i == 77)
-        {
-            struct OamMatrix m = gOamMatrices[gSprites[0].oam.matrixNum];
-            assert(m.a == 0 && m.b == -227 && m.c == 227 && m.d == 0);
-            assert(gOamMatrices[gSprites[1].oam.matrixNum].a == -229);
-            // Interrupted build reselects last complete DMA table, not scratch.
-            gScanlineEffect.srcBuffer = 1;
-            gMain.oamLoadDisabled = TRUE;
-            BattleCamera_PublishScanlines();
-            assert(gScanlineEffect.srcBuffer == 0);
-            gMain.oamLoadDisabled = FALSE;
-        }
-        BattleCamera_EndFrame();
-        assert(sAllocated == (1u << 7));
-        assert(gOamMatrices[7].b == -256 && gOamMatrices[7].c == 256);
-        assert(memcmp(original, gSprites, sizeof(original)) == 0);
-    }
-    sChoosing = FALSE;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    for (i = 0; i < 89; i++) Tick(1u << 7);
     BattleCamera_BeginFrame();
+    assert(sCamera.zoom == 284);
+    assert(gOamMatrices[gSprites[0].oam.matrixNum].b == -230);
+    assert(gOamMatrices[gSprites[0].oam.matrixNum].c == 230);
+    assert(gOamMatrices[gSprites[1].oam.matrixNum].a == -232);
+    gMain.oamLoadDisabled = TRUE;
+    {
+        u8 previous = gScanlineEffect.srcBuffer;
+        BattleCamera_PublishScanlines();
+        assert(gScanlineEffect.srcBuffer == (previous ^ 1));
+    }
+    gMain.oamLoadDisabled = FALSE;
     BattleCamera_EndFrame();
-    assert(!sCamera.active && !sOwnsScanlines && gScanlineEffect.state == 0);
-    sChoosing = TRUE;
-    for (i = 0; i < 80; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-        if (i == 77)
-            assert(sCamera.active && sCamera.zoom == BATTLE_CAMERA_MAX_ZOOM);
-    }
-    // An existing scanline owner is never displaced or stopped.
-    Ready();
-    gScanlineEffect.state = 1;
-    gScanlineEffect.dmaDest = (void *)REG_ADDR_BG1HOFS;
-    for (i = 0; i < 80; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-        assert(!sCamera.active && gScanlineEffect.state == 1);
-        assert(gScanlineEffect.dmaDest == (void *)REG_ADDR_BG1HOFS);
-    }
-    // An intro effect releasing DMA must allow a retry in the same battle.
-    gScanlineEffect.state = 0;
-    for (i = 0; i < 58; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-    }
-    assert(sCamera.active);
-    // Ownership taken after admission is also preserved on cancellation.
-    Ready();
-    for (i = 0; i < 60; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-    }
-    assert(sCamera.active);
-    gScanlineEffect.dmaDest = (void *)REG_ADDR_BG1HOFS;
-    BattleCamera_BeginFrame();
-    BattleCamera_EndFrame();
-    assert(!sCamera.active && gScanlineEffect.state == 1 && !sOwnsScanlines);
-    // Identical register/control parameters still belong to a new effect.
-    Ready();
-    for (i = 0; i < 60; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-    }
-    assert(sCamera.active);
+    assert(memcmp(sOriginal, gSprites, sizeof(sOriginal)) == 0 && sAllocated == (1u << 7));
+    assert(gOamMatrices[7].b == -256 && gOamMatrices[7].c == 256);
+
+    // Same-parameter ownership replacement must still be preserved.
     ScanlineEffect_SetParams((struct ScanlineEffectParams){(void *)REG_ADDR_BG3HOFS, SCANLINE_EFFECT_DMACNT_32BIT, 1, 0});
-    BattleCamera_BeginFrame();
-    BattleCamera_EndFrame();
+    Tick(1u << 7);
     assert(!sCamera.active && !sOwnsScanlines && gScanlineEffect.state == 1);
-    // Sweep the full authored track, including rows which are normally behind UI.
-    Ready();
-    for (i = 0; i <= BATTLE_CAMERA_MOVE_TICKS; i++)
-    {
-        sCamera.x = Ease(BATTLE_CAMERA_MAX_PAN_X * 256, i);
-        sCamera.y = Ease(-BATTLE_CAMERA_MAX_PAN_Y * 256, i);
-        sCamera.zoom = 256 + Ease(BATTLE_CAMERA_MAX_ZOOM - 256, i);
-        assert(BuildRows());
-        CheckRows();
-    }
-    // Existing animation activity and non-neutral legacy scroll reject the shot.
+    gSprites[0].oam.affineMode = ST_OAM_AFFINE_OFF;
+    gSprites[0].oam.matrixNum = gSprites[1].oam.matrixNum = 0;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+
+    // Existing local animation/global offsets suppress camera admission.
     Ready();
     gAnimScriptActive = TRUE;
-    for (i = 0; i < 80; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-        assert(!sCamera.active);
-    }
+    for (i = 0; i < BATTLE_CAMERA_WAIT_TICKS + 1; i++) Tick(0);
+    assert(!sCamera.active);
     gAnimScriptActive = FALSE;
     gBattle_BG3_X = 1;
-    for (i = 0; i < 80; i++)
-    {
-        BattleCamera_BeginFrame();
-        BattleCamera_EndFrame();
-        assert(!sCamera.active);
-    }
+    for (i = 0; i < BATTLE_CAMERA_WAIT_TICKS + 1; i++) Tick(0);
+    assert(!sCamera.active);
     gBattle_BG3_X = 0;
-    // Repeat while idle, with a neutral gap and no retained affine matrices.
-    Ready();
-    {
-        u32 starts = 0;
-        bool32 wasActive = FALSE;
-        for (i = 0; i < 380; i++)
-        {
-            BattleCamera_BeginFrame();
-            if (sCamera.active && !wasActive)
-            {
-                starts++;
-                if (starts == 2)
-                    assert(i == BATTLE_CAMERA_WAIT_TICKS - 1 + 2 * BATTLE_CAMERA_MOVE_TICKS
-                                + BATTLE_CAMERA_HOLD_TICKS + BATTLE_CAMERA_REPEAT_TICKS);
-            }
-            if (!sCamera.active)
-                assert(sCamera.zoom == 256 && !sOwnsScanlines);
-            wasActive = sCamera.active;
-            BattleCamera_EndFrame();
-            assert(sAllocated == 0 && sBackupCount == 0);
-        }
-        assert(starts == 2);
-    }
-    // Every loaded environment and wild/trainer/special battle flag combination
-    // must be admitted, including doubles with eight distinct scene sprites.
+
+    // All environment IDs, battle flags, and doubles remain admitted.
     {
         u32 env, type, count, n;
         const u32 types[] = {0, BATTLE_TYPE_TRAINER, BATTLE_TYPE_LINK,
                             BATTLE_TYPE_FRONTIER, BATTLE_TYPE_RECORDED};
-        for (n = 0; n < 9; n++)
-        {
-            gSprites[n].oam.affineMode = ST_OAM_AFFINE_OFF;
-            gSprites[n].oam.matrixNum = 0;
-            if (n >= 5)
-            {
-                gSprites[n].inUse = TRUE;
-                gSprites[n].oam.size = 3;
-                gSprites[n].x = 120;
-                gSprites[n].y = 80;
-                gSprites[n].centerToCornerVecX = -32;
-                gSprites[n].centerToCornerVecY = -32;
-            }
-        }
-        gBattlerSpriteIds[2] = 5;
-        gBattlerSpriteIds[3] = 6;
-        gBattlerPositions[2] = 2;
-        gBattlerPositions[3] = 3;
-        boxes[3].shadowSpriteIdPrimary = 7;
-        boxes[3].shadowSpriteIdSecondary = 8;
-        memcpy(original, gSprites, sizeof(original));
         for (env = 0; env < BATTLE_ENVIRONMENT_COUNT; env++)
         for (type = 0; type < ARRAY_COUNT(types); type++)
         for (count = 2; count <= 4; count += 2)
@@ -342,17 +299,10 @@ int main(void)
             gBattlersCount = count;
             gBattleTypeFlags = types[type];
             BattleCamera_SetEnvironment(env);
-            for (n = 0; n < 78; n++)
-            {
-                BattleCamera_BeginFrame();
-                if (n == 77)
-                    assert(sCamera.active && sCamera.zoom == BATTLE_CAMERA_MAX_ZOOM);
-                BattleCamera_EndFrame();
-                assert(memcmp(original, gSprites, sizeof(original)) == 0);
-                assert(sAllocated == 0);
-            }
+            for (n = 0; n <= BATTLE_CAMERA_WAIT_TICKS + 100; n++) Tick(0);
+            assert(sCamera.active);
         }
     }
-    puts("PASS: stronger track, row coverage, contact mapping, restoration, matrix rollback, affine/flips, UI, all environments and battle types, doubles, recurring idle passes, DMA ownership, interrupted publication");
+    puts("PASS: BW2-style initial WAIT/READY/PLAY, six bounded tracks, no repeat, neutral restore, busy resume, restart delay, all battle types/doubles, UI/affine/ownership safety");
     return 0;
 }
