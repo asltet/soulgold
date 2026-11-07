@@ -36,8 +36,11 @@ const u8 gBattleAnimMove_TailWhip[] = {8};
 const u8 gBattleAnimMove_RainDance[] = {9};
 
 static const u8 sGenericMoveScript[] = {99};
+static const struct AdditionalEffect sFreezeEffect[] = {{.moveEffect = MOVE_EFFECT_FREEZE}};
 const struct MoveInfo gMovesInfo[MOVES_COUNT_ALL] = {
     [1 ... MOVES_COUNT_ALL - 1] = {.category = DAMAGE_CATEGORY_PHYSICAL, .battleAnimScript = sGenericMoveScript},
+    [MOVE_ICE_BEAM] = {.category = DAMAGE_CATEGORY_SPECIAL, .battleAnimScript = sGenericMoveScript,
+                       .additionalEffects = sFreezeEffect, .numAdditionalEffects = 1},
     [MOVE_HEADBUTT] = {.category = DAMAGE_CATEGORY_PHYSICAL, .makesContact = TRUE, .battleAnimScript = gBattleAnimMove_Headbutt},
     [MOVE_PECK] = {.category = DAMAGE_CATEGORY_PHYSICAL, .makesContact = TRUE, .battleAnimScript = gBattleAnimMove_Peck},
     [MOVE_EMBER] = {.category = DAMAGE_CATEGORY_SPECIAL, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_Ember},
@@ -97,6 +100,7 @@ void SetOamMatrix(u8 i, u16 a, u16 b, u16 c, u16 d)
 }
 void FreeOamMatrix(u8 i)
 {
+    assert(sAllocated & (1u << i));
     sAllocated &= ~(1u << i);
     SetOamMatrix(i, 256, 0, 0, 256);
 }
@@ -286,7 +290,32 @@ static void TestCinematicMath(void)
         gOamMatrices[7] = saved;
     }
     Ready();
-    puts("PASS: easing endpoints/monotonicity, unchanged-row cache, shake/blend/environment invalidation");
+    {
+        struct Sprite saved[MAX_SPRITES + 1];
+        u32 i;
+        memcpy(saved, gSprites, sizeof(saved));
+        Ready();
+        sMoveCamera.active = TRUE;
+        sCamera.zoom = 280;
+        sMoveBlend = 256;
+        sAllocated = 0xFFFFFFFE;
+        for (i = 0; i < 8; i++)
+        {
+            gSprites[i] = saved[0];
+            gSprites[i].oam.affineMode = ST_OAM_AFFINE_OFF;
+            gSprites[i].oam.matrixNum = 0;
+            gSprites[i].invisible = FALSE;
+            assert(TransformSprite(i, gSprites[i].x, 120, 280));
+            assert(gSprites[i].oam.matrixNum == 0);
+        }
+        assert(sAllocated == 0xFFFFFFFF);
+        BattleCamera_EndFrame();
+        assert(sAllocated == 0xFFFFFFFE && sBackupCount == 0);
+        memcpy(gSprites, saved, sizeof(saved));
+        memcpy(sOriginal, saved, sizeof(saved));
+        Ready();
+    }
+    puts("PASS: easing/cache, shared affine slots and resource cleanup");
 }
 
 static void TestMoveCamera(void);
@@ -889,7 +918,7 @@ static void TestMoveCamera(void)
                     : move % 5 == 2 ? TARGET_ALLY : move % 5 == 3 ? TARGET_BOTH : TARGET_SELECTED;
             u8 target = type == TARGET_FIELD ? MAX_BATTLERS_COUNT : type == TARGET_ALLY ? 2 : 1;
             StartTestMove(move, 0, target, type, gMovesInfo[move].battleAnimScript);
-            assert(sMoveCamera.active && (!sMoveCamera.blocked || sMoveCamera.framing == BW2_FRAME_STILL));
+            assert(sMoveCamera.active && !sMoveCamera.blocked);
             for (n = 0; n < 4; n++) Tick(0);
             FinishTestMove();
         }
@@ -926,6 +955,34 @@ static void TestMoveCamera(void)
         }
         assert(!sMoveCamera.active && sCamera.x == 0);
     }
+
+    // Generic zoom starts with actual visuals, with no elapsed-time catch-up jump.
+    StartTestMove(MOVE_VINE_WHIP, 0, 1, TARGET_SELECTED, sGenericMoveScript);
+    assert(sMoveCamera.generic && sCamera.targetZoom > 256);
+    for (i = 0; i < 40; i++) Tick(0);
+    assert(sCamera.zoom == 256);
+    BattleCamera_OnSpriteCreated(9, 0);
+    Tick(0);
+    assert(sCamera.zoom <= 257);
+    for (i = 0; i < 40; i++) Tick(0);
+    assert(sCamera.zoom > 256 && sMoveCamera.zoomElapsed == sMoveCamera.duration);
+    FinishTestMove();
+    // Possible freeze reactions reserve1x so later monbg status cannot reset the shot.
+    StartTestMove(MOVE_ICE_BEAM, 0, 1, TARGET_SELECTED, sGenericMoveScript);
+    assert(sMoveCamera.translationOnly && sCamera.targetZoom == 256 && sCamera.targetY != 0);
+    BattleCamera_OnSpriteCreated(9, 0);
+    for (i = 0; i < 40; i++) Tick(0);
+    assert(sCamera.zoom == 256);
+    BattleCamera_EndMove();
+    gAnimScriptActive = FALSE;
+    Tick(0);
+    BattleCamera_OnAnimationLaunch(ANIM_TYPE_STATUS, B_ANIM_STATUS_FRZ, 1);
+    gAnimScriptActive = TRUE;
+    BattleCamera_AttachMonBg(1, 1);
+    Tick(0);
+    assert(sMoveCamera.active && !sMoveCamera.blocked && sCamera.zoom == 256);
+    BattleCamera_ClearMonBg(1);
+    FinishTestMove();
 
     // A travel profile holds user focus until actual visual completion, not age.
     StartTestMove(MOVE_WATER_GUN, 0, 1, TARGET_SELECTED, sGenericMoveScript);
@@ -981,7 +1038,7 @@ static void TestMoveCamera(void)
 
     // BG replacement suspends until completion, with no late focus/zoom pulse.
     StartTestMove(MOVE_TACKLE, 0, 1, TARGET_SELECTED, sGenericMoveScript);
-    assert(sMoveCamera.generic && sCamera.targetZoom == 256);
+    assert(sMoveCamera.generic && sCamera.targetZoom > 256 && sCamera.zoom == 256);
     BattleCamera_BlockMove();
     Tick(0);
     assert(sMoveCamera.suspended && !sCamera.active);

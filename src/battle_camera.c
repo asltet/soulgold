@@ -122,7 +122,8 @@ struct MoveCameraOverride
 struct MoveCameraState
 {
     bool8 active, blocked, impactSeen, actionComplete;
-    bool8 generic, suspended;
+    bool8 generic, suspended, translationOnly;
+    u16 zoomElapsed;
     bool8 visualSeen, targetAcquired;
     u8 framing, bgLayer[MAX_BATTLERS_COUNT];
     u8 focusMask, hitReactionMask;
@@ -545,21 +546,42 @@ static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
     }
     if (scale == 256)
         return TRUE;
-    matrix = AllocOamMatrix();
-    if (matrix == 0xFF)
-        return FALSE; // Roll back the entire shot, including the floor zoom.
-    backup->matrix = matrix;
-    if (sprite->oam.affineMode & ST_OAM_AFFINE_ON_MASK)
     {
-        struct OamMatrix original = gOamMatrices[sprite->oam.matrixNum];
-        SetOamMatrix(matrix, original.a * 256 / scale, original.b * 256 / scale,
-                     original.c * 256 / scale, original.d * 256 / scale);
-    }
-    else
-    {
-        s16 inverse = 65536 / scale;
-        SetOamMatrix(matrix, (sprite->oam.matrixNum & 8) ? -inverse : inverse, 0, 0,
-                     (sprite->oam.matrixNum & 16) ? -inverse : inverse);
+        s16 a, b, c, d;
+        if (sprite->oam.affineMode & ST_OAM_AFFINE_ON_MASK)
+        {
+            struct OamMatrix original = gOamMatrices[sprite->oam.matrixNum];
+            a = original.a * 256 / scale;
+            b = original.b * 256 / scale;
+            c = original.c * 256 / scale;
+            d = original.d * 256 / scale;
+        }
+        else
+        {
+            s16 inverse = 65536 / scale;
+            a = (sprite->oam.matrixNum & 8) ? -inverse : inverse;
+            b = c = 0;
+            d = (sprite->oam.matrixNum & 16) ? -inverse : inverse;
+        }
+        matrix = 0xFF;
+        for (i = 0; i + 1 < sBackupCount; i++)
+            if (sBackups[i].matrix != 0xFF)
+            {
+                struct OamMatrix *candidate = &gOamMatrices[sBackups[i].matrix];
+                if (candidate->a == a && candidate->b == b && candidate->c == c && candidate->d == d)
+                {
+                    matrix = sBackups[i].matrix;
+                    break;
+                }
+            }
+        if (matrix == 0xFF)
+        {
+            matrix = AllocOamMatrix();
+            if (matrix == 0xFF)
+                return FALSE; // Roll back the entire shot, including floor zoom.
+            backup->matrix = matrix; // Exactly one owner frees the shared frame slot.
+            SetOamMatrix(matrix, a, b, c, d);
+        }
     }
     sprite->oam.affineMode = ST_OAM_AFFINE_DOUBLE;
     sprite->oam.matrixNum = matrix;
@@ -809,6 +831,25 @@ static bool32 HasUncertainBounds(const struct Sprite *sprite)
         || (matrix->d != 256 && matrix->d != -256);
 }
 
+static bool32 NeedsTextBgReaction(u16 move)
+{
+    const struct MoveInfo *info = &gMovesInfo[move];
+    u32 i;
+    if (info->additionalEffects == NULL)
+        return FALSE;
+    for (i = 0; i < info->numAdditionalEffects; i++)
+        if (info->additionalEffects[i].moveEffect == MOVE_EFFECT_FREEZE
+            || info->additionalEffects[i].moveEffect == MOVE_EFFECT_FROSTBITE
+            || info->additionalEffects[i].moveEffect == MOVE_EFFECT_TRI_ATTACK)
+            return TRUE;
+    return FALSE;
+}
+
+static u16 MoveZoom(void)
+{
+    return sMoveCamera.translationOnly ? 0 : sMoveProfiles[sMoveCamera.profile].zoom;
+}
+
 static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script)
 {
     u32 i;
@@ -839,6 +880,7 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
     sMoveCamera.script = script;
     if (move == MOVE_NONE || move >= MOVES_COUNT_ALL || script == NULL)
         return;
+    sMoveCamera.translationOnly = NeedsTextBgReaction(move);
     ResolveMoveTargets(targetType);
     if (sMoveCamera.targetClass == CAMERA_TARGET_NONE)
         return;
@@ -881,7 +923,7 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
     if (sMoveCamera.framing == BW2_FRAME_GROUP)
         sMoveCamera.profile = MOVE_CAMERA_GROUP;
     if (sMoveCamera.framing == BW2_FRAME_STILL)
-        sMoveCamera.blocked = TRUE;
+        sMoveCamera.framing = BW2_FRAME_TARGET; // User preference: include these in the prototype too.
     for (i = 0; i < gBattlersCount; i++)
     {
         u8 id = gBattlerSpriteIds[i];
@@ -922,7 +964,7 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
     SetMoveGoal((sMoveCamera.profile == MOVE_CAMERA_EMBER
                  || sMoveCamera.framing == BW2_FRAME_USER || sMoveCamera.framing == BW2_FRAME_TRAVEL)
                 ? attacker : sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].start,
-                sMoveCamera.generic ? 0 : sMoveProfiles[sMoveCamera.profile].zoom);
+                MoveZoom());
 }
 
 static void ClampMoveFraming(void)
@@ -1029,7 +1071,7 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
             sCamera.targetX = BATTLE_CAMERA_FIELD_PAN_X * 256;
             sCamera.targetY = -256;
         }
-        if (HasMonBgActors())
+        if (sMoveCamera.translationOnly || HasMonBgActors())
             sCamera.targetZoom = 256;
         ClampMoveFraming();
     }
@@ -1049,14 +1091,19 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
                 sCamera.targetZoom = 256 + min(BATTLE_CAMERA_TARGET_ZOOM_DELTA,
                     zoom + max(0, BATTLE_CAMERA_TARGET_ZOOM_DELTA - BATTLE_CAMERA_MOVE_ZOOM_DELTA));
             if (GetBattlerSide(focus) == B_SIDE_PLAYER)
+            {
                 sCamera.targetY = min(BATTLE_CAMERA_MAX_PAN_Y * 256,
                     max(0, (y - BATTLE_CAMERA_HORIZON) * (sCamera.targetZoom - 256) * 256 / sCamera.targetZoom));
+                if (sMoveCamera.translationOnly)
+                    sCamera.targetY = BATTLE_CAMERA_MAX_PAN_Y * 256;
+            }
         }
         ClampMoveFraming();
     }
     sMoveCamera.easing = sMoveCamera.phase == CAMERA_PHASE_RETURN ? BATTLE_CAMERA_RETURN_EASING
                        : sHandoffTick < BATTLE_CAMERA_HANDOFF_TICKS ? BATTLE_CAMERA_EASING_SMOOTHSTEP : profile->easing;
     sMoveCamera.elapsed = 0;
+    sMoveCamera.zoomElapsed = 0;
     sMoveCamera.duration = max(max(1, duration), BATTLE_CAMERA_HANDOFF_TICKS - sHandoffTick);
 }
 
@@ -1214,7 +1261,7 @@ void BattleCamera_OnVisualBarrier(void)
     sMoveCamera.targetAcquired = TRUE;
     sMoveCamera.phase = CAMERA_PHASE_TARGET_FOCUS;
     SetMoveGoal(sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].travel,
-                sMoveCamera.generic ? 0 : sMoveProfiles[sMoveCamera.profile].zoom);
+                MoveZoom());
 }
 
 void BattleCamera_AttachMonBg(u8 battler, u8 bg)
@@ -1227,7 +1274,8 @@ void BattleCamera_AttachMonBg(u8 battler, u8 bg)
         return; // Cannot affine-scale the mon's text BG or inherit a zoomed pose safely.
     }
     sMoveCamera.bgLayer[battler] = bg;
-    sMoveCamera.generic = TRUE; // Shared1x translation, including all effect sprites.
+    sMoveCamera.generic = TRUE;
+    sMoveCamera.translationOnly = TRUE; // Shared1x translation, including all effect sprites.
     sCamera.startZoom = sCamera.targetZoom = 256;
 }
 
@@ -1323,6 +1371,14 @@ static bool32 UpdateMoveCamera(void)
                                 sMoveCamera.easing);
         sCamera.x = sCamera.startX + (sCamera.targetX - sCamera.startX) * weight / 256;
         sCamera.y = sCamera.startY + (sCamera.targetY - sCamera.startY) * weight / 256;
+        if (!sMoveCamera.generic)
+            sCamera.zoom = sCamera.startZoom + (sCamera.targetZoom - sCamera.startZoom) * weight / 256;
+    }
+    if (sMoveCamera.generic && sMoveCamera.zoomElapsed < sMoveCamera.duration
+        && (sMoveCamera.visualSeen || sMoveCamera.phase == CAMERA_PHASE_RETURN
+            || sCamera.targetZoom <= sCamera.startZoom))
+    {
+        s32 weight = EasingWeight(++sMoveCamera.zoomElapsed, sMoveCamera.duration, sMoveCamera.easing);
         sCamera.zoom = sCamera.startZoom + (sCamera.targetZoom - sCamera.startZoom) * weight / 256;
     }
     UpdateImpactShake();

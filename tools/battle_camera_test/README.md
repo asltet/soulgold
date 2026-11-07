@@ -239,3 +239,7 @@ early finish, slower return, zero-HP hold and special-animation cancellation.
 Direct debug users outside the normal turn loop must notify action completion.
 See parent reports/faux3d-action-completion.md.44 is logical updates, not an
 emulator-measured wall-clock duration; no gameplay waits/tasks were added.
+
+## Consistent move strength
+
+Generic moves now request full profile zoom after visual creation, with a separate eased clock to avoid catch-up snaps. Monbg and possible freeze/frostbite reaction paths retain compatible1? translation. Native regressions cover delayed visual activation,935 synthetic dispatches, action-completion holds and shared affine matrices with a single remaining hardware slot. These checks do not establish visual support for every move. See the workspace report `reports/faux3d-consistent-move-strength.md`; playtest both sides, doubles, monbg, status reactions and particle-heavy moves.
