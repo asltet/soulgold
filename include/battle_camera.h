@@ -8,17 +8,18 @@
 #define BATTLE_CAMERA_MOVE_MAX_TICKS 1200
 #define BATTLE_CAMERA_RETURN_TICKS 44
 #define BATTLE_CAMERA_FIELD_PAN_X 8
-#define BATTLE_CAMERA_TARGET_ZOOM_DELTA 28
+#define BATTLE_CAMERA_TARGET_ZOOM_DELTA 38
 #define BATTLE_CAMERA_GROUP_ZOOM_DELTA 12
 #define BATTLE_CAMERA_CONTEXT_ZOOM_SHARE 64 // Q8: keep one quarter of extra zoom.
 #define BATTLE_CAMERA_CONTEXT_SHRINK 4     // Q8: mild quiet-background recession.
 #define BATTLE_CAMERA_CONTEXT_STEP 16
 #define BATTLE_CAMERA_VFX_MARGIN 24
-#define BATTLE_CAMERA_MOVE_ZOOM_DELTA 24 // Up to1.094x; framing may reduce.
+#define BATTLE_CAMERA_MOVE_ZOOM_DELTA 32 // Up to1.125x; target framing may request1.148x.
 #define BATTLE_CAMERA_HANDOFF_TICKS 16
 #define BATTLE_CAMERA_FOCUS_LEFT_X 72
 #define BATTLE_CAMERA_FOCUS_SPAN_X 128
-#define BATTLE_CAMERA_MAX_ZOOM 288          // 1.125x near visible scale.
+#define BATTLE_CAMERA_IDLE_MAX_ZOOM 288     // Preserve existing idle intensity.
+#define BATTLE_CAMERA_MAX_ZOOM 294          // 1.148x near visible scale; framing may reduce.
 #define BATTLE_CAMERA_MAX_PAN_X 16          // Idle/source envelope, pixels.
 #define BATTLE_CAMERA_MOVE_PAN_X 16         // Stronger moves, within prepared artwork.
 #define BATTLE_CAMERA_IDLE_DOUBLES_PAN_X 12 // Preserve the near edge in doubles.
@@ -36,7 +37,7 @@
 #define BATTLE_CAMERA_MAX_SHAKE_Y 1
 #define BATTLE_CAMERA_MAX_SHAKE_TICKS 12
 #define BATTLE_CAMERA_EASING BATTLE_CAMERA_EASING_SMOOTHSTEP // 0 = linear.
-#define BATTLE_CAMERA_WAIT_TICKS 900        // BW2 normal initial idle threshold.
+#define BATTLE_CAMERA_WAIT_TICKS 900        // 15 seconds at nominal60 eligible updates/s.
 
 // Q8 depth planes. Select 0 for restrained, 1 for cinematic (default).
 #ifndef BATTLE_CAMERA_DEPTH_PRESET

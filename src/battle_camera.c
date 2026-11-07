@@ -275,7 +275,7 @@ static void BeginLeg(void)
     sCamera.startZoom = sCamera.zoom;
     sCamera.targetX = panLimit * key->x;
     sCamera.targetY = -BATTLE_CAMERA_IDLE_PAN_Y * key->y;
-    sCamera.targetZoom = 256 + (BATTLE_CAMERA_MAX_ZOOM - 256) * key->zoom / 256;
+    sCamera.targetZoom = 256 + (BATTLE_CAMERA_IDLE_MAX_ZOOM - 256) * key->zoom / 256;
     sCamera.frame = 0;
 }
 
@@ -344,6 +344,22 @@ static s32 RenderY(void)
                    sCamera.y + sShakeY));
 }
 
+static bool32 HasMonBgActors(void);
+
+static s32 SceneryPanAt(s32 sourceY)
+{
+    s32 moveWeight = 256;
+    // Keep live attack/monbg ground contacts uniform; only distant scenery
+    // recedes during move pans. Fade to full motion before the midground.
+    if (sMoveCamera.active && !sMoveCamera.translationOnly && !HasMonBgActors())
+    {
+        s32 distance = max(0, min(256, (BATTLE_CAMERA_MIDGROUND_Y - sourceY) * 256
+                             / (BATTLE_CAMERA_MIDGROUND_Y - BATTLE_CAMERA_HORIZON)));
+        moveWeight -= (256 - DepthWeight(sourceY)) * distance / 256;
+    }
+    return RenderX() * MoveBlend(DepthWeight(sourceY), moveWeight) / 65536;
+}
+
 static s32 PanAt(s32 sourceY)
 {
     return RenderX() * MoveBlend(DepthWeight(sourceY), 256) / 65536;
@@ -406,7 +422,7 @@ static bool32 BuildRows(void)
         s32 anchor = screen < middle ? BATTLE_CAMERA_HORIZON : BATTLE_CAMERA_MIDGROUND_Y;
         s32 inverse = screen < horizon ? inverseFar : screen < middle ? inverseMiddle : inverseNear;
         s32 sourceY = anchor + ((screen - origin) / 16) * inverse / 1048576;
-        s32 sourceX = PanAt(sourceY);
+        s32 sourceX = SceneryPanAt(sourceY);
         // Reject unwrapped samples before encoding hardware register bits.
         if (sourceY < BATTLE_CAMERA_SOURCE_MIN_Y || sourceY > BATTLE_CAMERA_SOURCE_MAX_Y
             || sourceX < 0 || sourceX + DISPLAY_WIDTH > 256)
@@ -1000,7 +1016,7 @@ static void ClampMoveFraming(void)
                        - ((sharedMask & (1u << i)) ? margin : 0));
             sCamera.targetX = min(sCamera.targetX, room * 256);
         }
-    // At most33 candidates *4 actors, only when a goal changes, not per frame.
+    // At most39 candidates *4 actors, only when a goal changes, not per frame.
     for (zoom = sCamera.targetZoom; zoom > 256; zoom--)
     {
         bool32 fits = TRUE;

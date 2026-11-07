@@ -209,7 +209,11 @@ static void TestDepthProjection(void)
                     // Endpoint must remain the legacy uniform animation model.
                     for (source = 0; source <= 160; source++)
                         assert(abs(GroundY(source) - (32 + ((source - 32) * 256 - y) * (s32)zoom / 65536)) <= 1);
+                    assert(SceneryPanAt(32) <= SceneryPanAt(72));
+                    assert(SceneryPanAt(72) == PanAt(120));
+                    sMoveCamera.translationOnly = TRUE;
                     assert(PanAt(32) == PanAt(120));
+                    sMoveCamera.translationOnly = FALSE;
                 }
             }
     Ready();
@@ -930,7 +934,7 @@ static void TestMoveCamera(void)
     assert(sMoveProfiles[MOVE_CAMERA_EMBER].impact == 6);
     assert(sMoveProfiles[MOVE_CAMERA_EMBER].restore == 10);
     assert(sMoveProfiles[MOVE_CAMERA_EMBER].pan == 256);
-    assert(sMoveProfiles[MOVE_CAMERA_EMBER].zoom == 24);
+    assert(sMoveProfiles[MOVE_CAMERA_EMBER].zoom == BATTLE_CAMERA_MOVE_ZOOM_DELTA);
 
     // Target-only patterns do not restart acquisition on impact or return early.
     StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
