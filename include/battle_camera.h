@@ -6,12 +6,16 @@
 #define BATTLE_CAMERA_DEMO TRUE
 #define BATTLE_CAMERA_MAX_SCENE_SPRITES 24
 #define BATTLE_CAMERA_MOVE_MAX_TICKS 1200
+#define BATTLE_CAMERA_RECOVERY_WAIT_TICKS 60
+#define BATTLE_CAMERA_RECOVERY_FOCUS_TICKS 12
+#define BATTLE_CAMERA_FIELD_PAN_X 4
+#define BATTLE_CAMERA_MOVE_ZOOM_DELTA 24 // Up to1.094x; framing may reduce.
 #define BATTLE_CAMERA_HANDOFF_TICKS 16
 #define BATTLE_CAMERA_FOCUS_LEFT_X 72
 #define BATTLE_CAMERA_FOCUS_SPAN_X 128
 #define BATTLE_CAMERA_MAX_ZOOM 288          // 1.125x near visible scale.
 #define BATTLE_CAMERA_MAX_PAN_X 16          // Idle/source envelope, pixels.
-#define BATTLE_CAMERA_MOVE_PAN_X 12         // Preserve audited move framing.
+#define BATTLE_CAMERA_MOVE_PAN_X 16         // Stronger moves, within prepared artwork.
 #define BATTLE_CAMERA_IDLE_DOUBLES_PAN_X 12 // Preserve the near edge in doubles.
 #define BATTLE_CAMERA_IDLE_PAN_Y 2          // Less vertical scenery deformation.
 #define BATTLE_CAMERA_MAX_PAN_Y 4           // Upward camera pan, pixels.
@@ -119,6 +123,13 @@
 
 #if BATTLE_CAMERA_FRAMING_MARGIN < 0 || BATTLE_CAMERA_FRAMING_MARGIN > 8 || BATTLE_CAMERA_MAX_SHAKE_X < 0 || BATTLE_CAMERA_MAX_SHAKE_X > 2 || BATTLE_CAMERA_MAX_SHAKE_Y < 0 || BATTLE_CAMERA_MAX_SHAKE_Y > 1 || BATTLE_CAMERA_MAX_SHAKE_TICKS < 1 || BATTLE_CAMERA_MAX_SHAKE_TICKS > 32
 #error Invalid cinematic framing/shake envelope
+#endif
+
+#if BATTLE_CAMERA_MOVE_ZOOM_DELTA < 0 || BATTLE_CAMERA_MOVE_ZOOM_DELTA > BATTLE_CAMERA_MAX_ZOOM - 256 || BATTLE_CAMERA_FIELD_PAN_X < 0 || BATTLE_CAMERA_FIELD_PAN_X > BATTLE_CAMERA_MOVE_PAN_X
+#error Universal camera cue exceeds artwork envelope
+#endif
+#if BATTLE_CAMERA_RECOVERY_WAIT_TICKS < 1 || BATTLE_CAMERA_RECOVERY_WAIT_TICKS > 300 || BATTLE_CAMERA_RECOVERY_FOCUS_TICKS < 1 || BATTLE_CAMERA_RECOVERY_FOCUS_TICKS > 60
+#error Invalid deferred camera cue timing
 #endif
 
 enum BattleCameraMovePhase

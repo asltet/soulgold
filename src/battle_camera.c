@@ -5,6 +5,7 @@
 #include "constants/battle_anim.h"
 #include "battle_main.h"
 #include "battle_camera.h"
+#include "move.h"
 #include "main.h"
 #include "palette.h"
 #include "scanline_effect.h"
@@ -80,6 +81,7 @@ enum MoveCameraProfileId
     MOVE_CAMERA_SELF,
     MOVE_CAMERA_ALLY,
     MOVE_CAMERA_GROUP,
+    MOVE_CAMERA_STATUS,
 };
 
 enum MoveCameraTargetClass
@@ -108,6 +110,10 @@ struct MoveCameraOverride
 struct MoveCameraState
 {
     bool8 active, blocked, impactSeen;
+    bool8 generic, deferred, postlude;
+    u16 move, recoveryTicks;
+    u8 targetType;
+    const u8 *script;
     u8 shakeTick, easing;
     u8 halfWidth[MAX_BATTLERS_COUNT], halfHeight[MAX_BATTLERS_COUNT];
     bool8 affineBounds;
@@ -128,6 +134,8 @@ enum MoveCameraEvent
     CAMERA_EVENT_START,
     CAMERA_EVENT_END,
     CAMERA_EVENT_CANCEL,
+    CAMERA_EVENT_SUSPEND,
+    CAMERA_EVENT_START_SUSPENDED,
 };
 struct MoveCameraRequest
 {
@@ -139,6 +147,7 @@ static EWRAM_DATA struct MoveCameraRequest sMoveRequest = {0};
 
 static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script);
 static void EndMoveNow(void);
+static void SuspendMoveNow(void);
 static bool32 UpdateMoveCamera(void);
 static void SetMoveGoal(u8 focus, u16 duration, u16 zoom);
 
@@ -480,11 +489,17 @@ void BattleCamera_BeginFrame(void)
 
     // VM/controller events publish only inside the existing OAM transaction.
     sMoveRequest.event = CAMERA_EVENT_NONE;
-    if (event == CAMERA_EVENT_START)
+    if (event == CAMERA_EVENT_START || event == CAMERA_EVENT_START_SUSPENDED)
+    {
         StartMoveNow(sMoveRequest.move, sMoveRequest.attacker, sMoveRequest.target,
                      sMoveRequest.targetType, sMoveRequest.script);
+        if (event == CAMERA_EVENT_START_SUSPENDED)
+            SuspendMoveNow();
+    }
     else if (event == CAMERA_EVENT_CANCEL)
         BattleCamera_Cancel();
+    else if (event == CAMERA_EVENT_SUSPEND)
+        SuspendMoveNow();
     else if (event == CAMERA_EVENT_END)
         EndMoveNow();
 
@@ -717,18 +732,32 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
     sMoveCamera.attacker = attacker;
     sMoveCamera.target = target;
     sMoveCamera.phase = CAMERA_PHASE_MOVE_START;
+    sMoveCamera.move = move;
+    sMoveCamera.targetType = targetType;
+    sMoveCamera.script = script;
+    if (move == MOVE_NONE || move >= MOVES_COUNT_ALL || script == NULL)
+        return;
     ResolveMoveTargets(targetType);
     if (sMoveCamera.targetClass == CAMERA_TARGET_NONE)
         return;
+    sMoveCamera.generic = TRUE;
+    sMoveCamera.blocked = FALSE;
+    sMoveCamera.profile = gMovesInfo[move].category == DAMAGE_CATEGORY_SPECIAL ? MOVE_CAMERA_SPECIAL
+                        : gMovesInfo[move].category == DAMAGE_CATEGORY_STATUS ? MOVE_CAMERA_STATUS
+                        : gMovesInfo[move].makesContact ? MOVE_CAMERA_MELEE : MOVE_CAMERA_PHYSICAL;
     for (i = 0; i < ARRAY_COUNT(sMoveOverrides); i++)
         if (sMoveOverrides[i].move == move && sMoveOverrides[i].script == script)
         {
             sMoveCamera.profile = sMoveOverrides[i].profile;
-            sMoveCamera.blocked = FALSE;
+            sMoveCamera.generic = FALSE;
             break;
         }
-    if (sMoveCamera.blocked)
-        return;
+    // Noncanonical weather/charge variants still get a safe post-animation cue.
+    if (sMoveCamera.generic && script != gMovesInfo[move].battleAnimScript)
+    {
+        sMoveCamera.blocked = TRUE;
+        sMoveCamera.deferred = TRUE;
+    }
     if (sMoveCamera.targetClass == CAMERA_TARGET_SELF)
         sMoveCamera.profile = MOVE_CAMERA_SELF;
     else if (sMoveCamera.targetClass == CAMERA_TARGET_ALLY)
@@ -757,11 +786,8 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
                 sMoveCamera.blocked = TRUE;
         }
     }
-    if (sMoveCamera.profile == MOVE_CAMERA_GROUP)
-    {
-        sMoveCamera.phase = CAMERA_PHASE_ATTACK_PRESENTATION;
-        return; // Deliberately stable, widest supported neutral composition.
-    }
+    if (sMoveCamera.blocked)
+        return;
     if (inherit && !sMoveCamera.blocked)
     {
         sCamera.x = oldX;
@@ -772,7 +798,7 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
     }
     SetMoveGoal(sMoveCamera.profile == MOVE_CAMERA_MELEE || sMoveCamera.profile == MOVE_CAMERA_SPECIAL
                 ? attacker : sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].start,
-                sMoveProfiles[sMoveCamera.profile].zoom);
+                sMoveCamera.generic ? 0 : sMoveProfiles[sMoveCamera.profile].zoom);
 }
 
 static void ClampMoveFraming(void)
@@ -831,7 +857,14 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
     sCamera.startZoom = sCamera.zoom;
     sCamera.targetX = sCamera.targetY = 0;
     sCamera.targetZoom = 256;
-    if (focus < gBattlersCount && VisibleMoveBattler(focus))
+    if (sMoveCamera.profile == MOVE_CAMERA_GROUP && sMoveCamera.phase != CAMERA_PHASE_RETURN)
+    {
+        // A small common pan keeps all targets together; no extra zoom.
+        sCamera.targetX = BATTLE_CAMERA_FIELD_PAN_X * 256;
+        sCamera.targetY = -256;
+        ClampMoveFraming();
+    }
+    else if (focus < gBattlersCount && VisibleMoveBattler(focus))
     {
         s32 x = gSprites[gBattlerSpriteIds[focus]].x;
         s32 y = GetBattlerSpriteCoord(focus, BATTLER_COORD_Y);
@@ -853,9 +886,19 @@ static void EndMoveNow(void)
 {
     if (!sMoveCamera.active)
         return;
-    if (sMoveCamera.blocked || sMoveCamera.profile == MOVE_CAMERA_GROUP)
+    if (sMoveCamera.blocked)
     {
-        BattleCamera_Cancel();
+        if (!sMoveCamera.deferred)
+            BattleCamera_Cancel();
+        return;
+    }
+    if (sMoveCamera.generic && !sMoveCamera.postlude && !gAnimScriptActive)
+    {
+        sMoveCamera.generic = FALSE;
+        sMoveCamera.postlude = TRUE;
+        sMoveCamera.phase = CAMERA_PHASE_TARGET_FOCUS;
+        SetMoveGoal(sMoveCamera.target, BATTLE_CAMERA_RECOVERY_FOCUS_TICKS,
+                    sMoveProfiles[sMoveCamera.profile].zoom);
         return;
     }
     if (sMoveCamera.phase != CAMERA_PHASE_RETURN)
@@ -882,17 +925,37 @@ void BattleCamera_InterruptAnimation(void)
 
 void BattleCamera_EndMove(void)
 {
-    if (sMoveRequest.event == CAMERA_EVENT_CANCEL)
+    if (sMoveRequest.event == CAMERA_EVENT_CANCEL || sMoveRequest.event == CAMERA_EVENT_SUSPEND)
         return;
     // A zero-update animation needs neutral cleanup, not an artificial shot.
-    sMoveRequest.event = sMoveRequest.event == CAMERA_EVENT_START ? CAMERA_EVENT_CANCEL : CAMERA_EVENT_END;
+    sMoveRequest.event = sMoveRequest.event == CAMERA_EVENT_START || sMoveRequest.event == CAMERA_EVENT_START_SUSPENDED
+                       ? CAMERA_EVENT_CANCEL : CAMERA_EVENT_END;
 }
 
 void BattleCamera_BlockMove(void)
 {
     // No partial cancellation between VM commands and the OAM snapshot boundary.
-    sMoveCamera.blocked = TRUE;
-    BattleCamera_InterruptAnimation();
+    if (sMoveRequest.event == CAMERA_EVENT_CANCEL)
+        return;
+    if (sMoveRequest.event == CAMERA_EVENT_START || sMoveRequest.event == CAMERA_EVENT_START_SUSPENDED)
+        sMoveRequest.event = CAMERA_EVENT_START_SUSPENDED;
+    else
+        sMoveRequest.event = CAMERA_EVENT_SUSPEND;
+}
+
+static void SuspendMoveNow(void)
+{
+    if (!sMoveCamera.active)
+        return;
+    if (HasScanlineLease())
+        ScanlineEffect_Stop();
+    sOwnsScanlines = FALSE;
+    sRowsValid = FALSE;
+    memset(&sCamera, 0, sizeof(sCamera));
+    sCamera.zoom = sCamera.targetZoom = 256;
+    sShakeX = sShakeY = 0;
+    sMoveCamera.blocked = sMoveCamera.deferred = TRUE;
+    sMoveCamera.effects[0] = sMoveCamera.effects[1] = 0;
 }
 
 void BattleCamera_OnSpriteCreated(u8 id, u16 tileTag)
@@ -906,7 +969,7 @@ void BattleCamera_OnSpriteCreated(u8 id, u16 tileTag)
     for (i = 0; i < MAX_BATTLERS_COUNT; i++)
         if ((sMoveCamera.actorMask & (1u << i)) && sMoveCamera.actorSprite[i] == id)
         {
-            BattleCamera_BlockMove(); // Battler replacement invalidates the snapshot binding.
+            BattleCamera_InterruptAnimation(); // Battler replacement invalidates the snapshot binding.
             return;
         }
     if (sMoveCamera.blocked || !gAnimScriptActive)
@@ -919,7 +982,7 @@ void BattleCamera_OnSpriteCreated(u8 id, u16 tileTag)
         sMoveCamera.shakeTick = 0;
         sMoveCamera.phase = CAMERA_PHASE_IMPACT;
         SetMoveGoal(sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].impact,
-                    sMoveProfiles[sMoveCamera.profile].zoom);
+                    sMoveCamera.generic ? 0 : sMoveProfiles[sMoveCamera.profile].zoom);
     }
 }
 
@@ -928,7 +991,7 @@ static void UpdateImpactShake(void)
     const struct MoveCameraProfile *profile = &sMoveProfiles[sMoveCamera.profile];
     u16 ticks = min(profile->shakeTicks, BATTLE_CAMERA_MAX_SHAKE_TICKS);
     sShakeX = sShakeY = 0;
-    if (sMoveCamera.impactSeen && sMoveCamera.shakeTick < ticks)
+    if (!sMoveCamera.generic && sMoveCamera.impactSeen && sMoveCamera.shakeTick < ticks)
     {
         s32 decay = (ticks - sMoveCamera.shakeTick) * 256 / ticks;
         s32 sign = (sMoveCamera.shakeTick / 2) & 1 ? -1 : 1;
@@ -943,17 +1006,57 @@ static bool32 UpdateMoveCamera(void)
     u32 i;
     const struct MoveCameraProfile *profile = &sMoveProfiles[sMoveCamera.profile];
     if (!gMain.inBattle || !sSceneReady || !gBattleSpritesDataPtr
+        || !gBattleSpritesDataPtr->battlerData || !gBattleSpritesDataPtr->healthBoxesData
         || gBattlersCount != sMoveCamera.battlerCount
-        || gPaletteFade.active || gBattle_BG3_X || gBattle_BG3_Y
-        || gSpriteCoordOffsetX || gSpriteCoordOffsetY
         || ++sMoveCamera.age > BATTLE_CAMERA_MOVE_MAX_TICKS)
         goto cancel;
+    if (gPaletteFade.active || gBattle_BG3_X || gBattle_BG3_Y || gSpriteCoordOffsetX || gSpriteCoordOffsetY
+        || (sOwnsScanlines && !HasScanlineLease()))
+        SuspendMoveNow();
     if (sMoveCamera.blocked)
     {
-        if (!gAnimScriptActive)
+        if (!sMoveCamera.deferred)
+        {
+            if (!gAnimScriptActive)
+                goto cancel;
+            return FALSE;
+        }
+        if (gAnimScriptActive)
+            return FALSE;
+        if (++sMoveCamera.recoveryTicks > BATTLE_CAMERA_RECOVERY_WAIT_TICKS)
             goto cancel;
-        return FALSE;
+        if (gPaletteFade.active || gBattle_BG3_X || gBattle_BG3_Y || gSpriteCoordOffsetX || gSpriteCoordOffsetY
+            || gScanlineEffect.state != 0 || gScanlineEffect.waveTaskId != TASK_NONE)
+            return FALSE;
+        for (i = 0; i < gBattlersCount; i++)
+            if ((sMoveCamera.actorMask & (1u << i))
+                && (!VisibleMoveBattler(i) || gBattlerSpriteIds[i] != sMoveCamera.actorSprite[i]
+                    || gSprites[sMoveCamera.actorSprite[i]].images != sMoveCamera.actorImages[i]
+                    || gBattleSpritesDataPtr->battlerData[i].behindSubstitute))
+                goto cancel;
+        {
+            u16 move = sMoveCamera.move, age = sMoveCamera.age;
+            u8 attacker = sMoveCamera.attacker, target = sMoveCamera.target, type = sMoveCamera.targetType;
+            const u8 *script = sMoveCamera.script;
+            StartMoveNow(move, attacker, target, type, script);
+            sMoveCamera.age = age; // Recovery cannot restart the whole-action watchdog.
+            if (!sMoveCamera.active || !VisibleMoveBattler(attacker))
+                goto cancel;
+            // Bind the current actors, not stale sprites from before Transform/switch.
+            if (!sMoveCamera.actorMask || (sMoveCamera.blocked && !sMoveCamera.deferred))
+                goto cancel;
+            for (i = 0; i < gBattlersCount; i++)
+                if ((sMoveCamera.actorMask & (1u << i)) && (gSprites[sMoveCamera.actorSprite[i]].oam.shape >= 3
+                    || gBattleSpritesDataPtr->battlerData[i].behindSubstitute))
+                    goto cancel;
+            sMoveCamera.blocked = sMoveCamera.deferred = sMoveCamera.generic = FALSE;
+            sMoveCamera.postlude = TRUE;
+            sMoveCamera.phase = CAMERA_PHASE_TARGET_FOCUS;
+            SetMoveGoal(sMoveCamera.target, BATTLE_CAMERA_RECOVERY_FOCUS_TICKS,
+                        sMoveProfiles[sMoveCamera.profile].zoom);
+        }
     }
+    profile = &sMoveProfiles[sMoveCamera.profile];
     for (i = 0; i < gBattlersCount; i++)
     {
         if (gBattlerSpriteIds[i] != sMoveCamera.actorSprite[i])
@@ -966,14 +1069,18 @@ static bool32 UpdateMoveCamera(void)
         else if (VisibleMoveBattler(i))
             goto cancel; // A new battler joined an otherwise unchanged slot.
     }
-    if (!gAnimScriptActive)
+    if (!gAnimScriptActive && (!sMoveCamera.postlude || (sMoveCamera.elapsed == sMoveCamera.duration
+        && sMoveCamera.phase == CAMERA_PHASE_ATTACK_PRESENTATION)))
         EndMoveNow();
-    if (!sMoveCamera.active || sMoveCamera.profile == MOVE_CAMERA_GROUP)
+    if (!sMoveCamera.active)
         return FALSE;
     if (!HasScanlineLease())
     {
         if (sOwnsScanlines || !BuildRows() || !AcquireScanlines())
-            goto cancel;
+        {
+            SuspendMoveNow();
+            return FALSE;
+        }
         sCamera.active = TRUE;
     }
     if (sHandoffTick < BATTLE_CAMERA_HANDOFF_TICKS)
@@ -996,7 +1103,7 @@ static bool32 UpdateMoveCamera(void)
         {
         case CAMERA_PHASE_MOVE_START:
             sMoveCamera.phase = CAMERA_PHASE_TARGET_FOCUS;
-            SetMoveGoal(sMoveCamera.target, profile->travel, profile->zoom);
+            SetMoveGoal(sMoveCamera.target, profile->travel, sMoveCamera.generic ? 0 : profile->zoom);
             break;
         case CAMERA_PHASE_TARGET_FOCUS:
         case CAMERA_PHASE_IMPACT:

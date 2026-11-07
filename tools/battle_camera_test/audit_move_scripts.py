@@ -1,4 +1,4 @@
-"""Static guard for the first source-audited move list, not a runtime proof.
+"""Static audit of the nine specialized bindings, not universal eligibility or runtime proof.
 Run from SoulGold root. Traverses simple assembly call/goto bodies and rejects
 BG ownership commands in non-neutral camera profiles. Also emits source lines.
 """

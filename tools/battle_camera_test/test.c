@@ -34,6 +34,20 @@ const u8 gBattleAnimMove_Growl[] = {7};
 const u8 gBattleAnimMove_TailWhip[] = {8};
 const u8 gBattleAnimMove_RainDance[] = {9};
 
+static const u8 sGenericMoveScript[] = {99};
+const struct MoveInfo gMovesInfo[MOVES_COUNT_ALL] = {
+    [1 ... MOVES_COUNT_ALL - 1] = {.category = DAMAGE_CATEGORY_PHYSICAL, .battleAnimScript = sGenericMoveScript},
+    [MOVE_HEADBUTT] = {.category = DAMAGE_CATEGORY_PHYSICAL, .makesContact = TRUE, .battleAnimScript = gBattleAnimMove_Headbutt},
+    [MOVE_PECK] = {.category = DAMAGE_CATEGORY_PHYSICAL, .makesContact = TRUE, .battleAnimScript = gBattleAnimMove_Peck},
+    [MOVE_EMBER] = {.category = DAMAGE_CATEGORY_SPECIAL, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_Ember},
+    [MOVE_SPLASH] = {.category = DAMAGE_CATEGORY_STATUS, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_Splash},
+    [MOVE_WITHDRAW] = {.category = DAMAGE_CATEGORY_STATUS, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_Withdraw},
+    [MOVE_HELPING_HAND] = {.category = DAMAGE_CATEGORY_STATUS, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_HelpingHand},
+    [MOVE_GROWL] = {.category = DAMAGE_CATEGORY_STATUS, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_Growl},
+    [MOVE_TAIL_WHIP] = {.category = DAMAGE_CATEGORY_STATUS, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_TailWhip},
+    [MOVE_RAIN_DANCE] = {.category = DAMAGE_CATEGORY_STATUS, .makesContact = FALSE, .battleAnimScript = gBattleAnimMove_RainDance},
+};
+
 u16 gBattle_BG3_X, gBattle_BG3_Y;
 s16 gSpriteCoordOffsetX, gSpriteCoordOffsetY;
 bool8 gAnimScriptActive;
@@ -488,7 +502,7 @@ static void FinishTestMove(void)
     u32 i;
     BattleCamera_EndMove();
     gAnimScriptActive = FALSE;
-    for (i = 0; i < 24; i++) Tick(0);
+    for (i = 0; i < 64; i++) Tick(0);
     assert(!sMoveCamera.active && !sCamera.active && !sOwnsScanlines);
     assert(sCamera.x == 0 && sCamera.y == 0 && sCamera.zoom == 256);
 }
@@ -690,7 +704,7 @@ static void TestMoveCamera(void)
     for (i = 0; i < 30; i++)
     {
         Tick(0);
-        assert(!sCamera.active && sCamera.zoom == 256 && !sOwnsScanlines);
+        assert(sCamera.active && sCamera.zoom == 256 && sCamera.x <= BATTLE_CAMERA_FIELD_PAN_X * 256);
     }
     FinishTestMove();
     StartTestMove(MOVE_RAIN_DANCE, 0, MAX_BATTLERS_COUNT, TARGET_FIELD, gBattleAnimMove_RainDance);
@@ -752,8 +766,10 @@ static void TestMoveCamera(void)
     BattleCamera_BlockMove();
     BattleCamera_EndMove(); // End cannot override an unsupported-command cancellation.
     Tick(0);
-    assert(!sMoveCamera.active && !sOwnsScanlines);
+    assert(sMoveCamera.active && sMoveCamera.blocked && sMoveCamera.deferred && !sOwnsScanlines);
     gAnimScriptActive = FALSE;
+    for (i = 0; i < 40; i++) Tick(0);
+    assert(!sMoveCamera.active);
 
     // Malformed/extreme animation coordinates fail closed before projection.
     StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
@@ -778,7 +794,7 @@ static void TestMoveCamera(void)
     for (i = 0; i < 12; i++) Tick(0);
     ScanlineEffect_SetParams((struct ScanlineEffectParams){(void *)REG_ADDR_BG3HOFS, SCANLINE_EFFECT_DMACNT_32BIT, 1, 0});
     Tick(0);
-    assert(!sMoveCamera.active && !sOwnsScanlines && gScanlineEffect.state == 1);
+    assert(sMoveCamera.active && sMoveCamera.blocked && !sOwnsScanlines && gScanlineEffect.state == 1);
     ScanlineEffect_Stop();
     gAnimScriptActive = FALSE;
     // Local move affine state is composed in temporary slots and never reset.
@@ -846,5 +862,55 @@ static void TestMoveCamera(void)
     for (i = 0; i <= BATTLE_CAMERA_MOVE_MAX_TICKS; i++) Tick(0);
     assert(!sMoveCamera.active && gAnimScriptActive);
     gAnimScriptActive = FALSE;
+    // Every valid move ID is eligible, without adding a per-move whitelist row.
+    // Synthetic metadata proves dispatch breadth, not all real animation callbacks.
+    {
+        u32 move;
+        for (move = 1; move < MOVES_COUNT_ALL; move++)
+        {
+            u8 type = move % 5 == 0 ? TARGET_FIELD : move % 5 == 1 ? TARGET_USER
+                    : move % 5 == 2 ? TARGET_ALLY : move % 5 == 3 ? TARGET_BOTH : TARGET_SELECTED;
+            u8 target = type == TARGET_FIELD ? MAX_BATTLERS_COUNT : type == TARGET_ALLY ? 2 : 1;
+            StartTestMove(move, 0, target, type, gMovesInfo[move].battleAnimScript);
+            assert(sMoveCamera.active && !sMoveCamera.blocked);
+            for (n = 0; n < 4; n++) Tick(0);
+            FinishTestMove();
+        }
+        printf("PASS: universal dispatcher for %u synthetic canonical move IDs\n", MOVES_COUNT_ALL - 1);
+    }
+    // Complex scripts suspend first, then cue after release, without VM waits.
+    StartTestMove(MOVE_TACKLE, 0, 1, TARGET_SELECTED, sGenericMoveScript);
+    assert(sMoveCamera.generic && sCamera.targetZoom == 256);
+    BattleCamera_BlockMove();
+    Tick(0);
+    assert(sMoveCamera.deferred && !sCamera.active);
+    for (i = 0; i < 10; i++) Tick(0);
+    gAnimScriptActive = FALSE;
+    Tick(0);
+    assert(sMoveCamera.postlude && !sMoveCamera.blocked && sCamera.active);
+    assert(sCamera.targetZoom > 256);
+    for (i = 0; i < 40; i++) Tick(0);
+    assert(!sMoveCamera.active && !sOwnsScanlines);
+    // Suspension in the launch transaction retains the executed action context.
+    gAnimScriptActive = TRUE;
+    BattleCamera_StartMove(MOVE_TACKLE, 0, 1, TARGET_SELECTED, sGenericMoveScript);
+    BattleCamera_BlockMove();
+    Tick(0);
+    assert(sMoveCamera.move == MOVE_TACKLE && sMoveCamera.deferred);
+    BattleCamera_InterruptAnimation();
+    BattleCamera_BlockMove();
+    Tick(0);
+    assert(!sMoveCamera.active); // Hard cancellation always dominates suspension.
+    gAnimScriptActive = FALSE;
+
+    // A new action supersedes deferred framing; a busy owner is never stopped.
+    StartTestMove(MOVE_TACKLE, 0, 1, TARGET_SELECTED, sGenericMoveScript);
+    BattleCamera_BlockMove(); Tick(0);
+    gAnimScriptActive = FALSE;
+    ScanlineEffect_SetParams((struct ScanlineEffectParams){(void *)REG_ADDR_BG3HOFS, SCANLINE_EFFECT_DMACNT_32BIT, 1, 0});
+    for (i = 0; i < BATTLE_CAMERA_RECOVERY_WAIT_TICKS + 2; i++) Tick(0);
+    assert(!sMoveCamera.active && gScanlineEffect.state == 1);
+    ScanlineEffect_Stop();
+    Ready();
     puts("PASS: repeated executed moves, both sides, resolved self/ally/spread/field targets, projectile alignment, impacts, invalidation, interruption, timeout, neutral reset");
 }

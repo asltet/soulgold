@@ -169,3 +169,17 @@ other admitted profiles. Normal/menu returns use smootherstep; inherited idle
 legs retain smoothstep before profile-specific easing. No VM waits were added.
 Rendering cache keys include effective shake X/Y, zoom, blend and environment.
 See parent reports/faux3d-regression-tests.md for the full pending emulator matrix.
+
+## Universal move profiles and stronger framing (2026-11-07)
+
+Every valid executed move now selects a metadata/target default, retaining the
+nine specialized script overrides. Live generic effects use uniform translation;
+extra zoom is a short after-effect cue. BG/scanline/global-offset owners suspend
+camera rendering and may receive the cue after animation completion/resources
+release. Recovery times out after60 logical updates and never delays gameplay.
+Move pan cap16px; specialized/post-effect zoom requests24/256 extra; field pan4px.
+
+The native fixture dispatches all935 nonzero move-ID slots with synthetic
+metadata, not935 actual animation scripts. It also tests deferred launch/end,
+cancel priority, busy-owner expiry and repeated cleanup. Read the parent report
+reports/faux3d-all-move-camera.md before treating earlier six-move lists as current.

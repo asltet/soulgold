@@ -1,13 +1,14 @@
-// First audited scripts only. Unknown/replaced scripts retain neutral framing.
+// Specialized profiles override metadata defaults; complex effects defer safely.
 // Durations are authored logical ticks, not claimed BW2 move timings.
 static const struct MoveCameraProfile sMoveProfiles[] = {
     // start, travel, impact, return, pan(Q8), zoom delta(Q8), easing, shake X/Y pixels/ticks
-    {6, 10, 4, 10, 256, 8, BATTLE_CAMERA_EASING_SMOOTHSTEP, 2, 1, 8}, // melee user -> target
-    {8, 8, 4, 10, 256, 8, BATTLE_CAMERA_EASING_SMOOTHSTEP, 1, 0, 6}, // defender emphasis
-    {8, 24, 6, 10, 192, 0, BATTLE_CAMERA_EASING_OUT_CUBIC, 0, 0, 0}, // ranged endpoints
-    {10, 16, 4, 12, 160, 12, BATTLE_CAMERA_EASING_SMOOTHERSTEP, 0, 0, 0}, // self
-    {8, 12, 4, 10, 192, 0, BATTLE_CAMERA_EASING_SMOOTHSTEP, 0, 0, 0}, // ally
-    {1, 1, 1, 1, 0, 0, BATTLE_CAMERA_EASING_SMOOTHSTEP, 0, 0, 0}, // stable spread/field
+    {6, 10, 4, 10, 256, BATTLE_CAMERA_MOVE_ZOOM_DELTA, BATTLE_CAMERA_EASING_SMOOTHSTEP, 2, 1, 8}, // melee user -> target
+    {8, 8, 4, 10, 256, BATTLE_CAMERA_MOVE_ZOOM_DELTA, BATTLE_CAMERA_EASING_SMOOTHSTEP, 1, 0, 6}, // defender emphasis
+    {8, 24, 6, 10, 256, BATTLE_CAMERA_MOVE_ZOOM_DELTA, BATTLE_CAMERA_EASING_OUT_CUBIC, 0, 0, 0}, // ranged endpoints
+    {10, 16, 4, 12, 224, BATTLE_CAMERA_MOVE_ZOOM_DELTA, BATTLE_CAMERA_EASING_SMOOTHERSTEP, 0, 0, 0}, // self
+    {8, 12, 4, 10, 256, BATTLE_CAMERA_MOVE_ZOOM_DELTA, BATTLE_CAMERA_EASING_SMOOTHSTEP, 0, 0, 0}, // ally
+    {10, 18, 4, 12, 96, 0, BATTLE_CAMERA_EASING_SMOOTHERSTEP, 0, 0, 0}, // wide spread/field
+    {10, 16, 4, 12, 224, 16, BATTLE_CAMERA_EASING_SMOOTHERSTEP, 0, 0, 0}, // opponent status
 };
 static const struct MoveCameraOverride sMoveOverrides[] = {
     {MOVE_HEADBUTT, MOVE_CAMERA_MELEE, gBattleAnimMove_Headbutt},
