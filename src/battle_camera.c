@@ -49,6 +49,11 @@ static EWRAM_DATA struct CameraSpriteBackup sBackups[BATTLE_CAMERA_MAX_SCENE_SPR
 static EWRAM_DATA u8 sBackupCount = 0;
 static EWRAM_DATA u16 sIdleFrames = 0;
 static EWRAM_DATA u16 sWaitTicks = 0;
+static EWRAM_DATA bool8 sMenuReturning = FALSE;
+static EWRAM_DATA u16 sMenuReturnTick = 0;
+static EWRAM_DATA u16 sMoveBlend = 0;
+static EWRAM_DATA u16 sHandoffStartBlend = 0;
+static EWRAM_DATA u16 sHandoffTick = 0;
 static EWRAM_DATA u8 sLastTrack = 0;
 static EWRAM_DATA u32 sVisualRandom = 0;
 static EWRAM_DATA bool8 sSceneReady = FALSE;
@@ -145,6 +150,11 @@ void BattleCamera_Cancel(void)
     sCamera.zoom = sCamera.targetZoom = 256;
     sIdleFrames = 0;
     sWaitTicks = BATTLE_CAMERA_WAIT_TICKS;
+    sMenuReturning = FALSE;
+    sMenuReturnTick = 0;
+    sMoveBlend = 256;
+    sHandoffStartBlend = 256;
+    sHandoffTick = BATTLE_CAMERA_HANDOFF_TICKS;
 }
 
 void BattleCamera_Reset(void)
@@ -187,11 +197,12 @@ static u8 PickTrack(void)
 static void BeginLeg(void)
 {
     const struct CameraKey *key = &sIdleTracks[sCamera.track].keys[sCamera.leg];
+    u16 panLimit = gBattlersCount > 2 ? BATTLE_CAMERA_IDLE_DOUBLES_PAN_X : BATTLE_CAMERA_MAX_PAN_X;
     sCamera.startX = sCamera.x;
     sCamera.startY = sCamera.y;
     sCamera.startZoom = sCamera.zoom;
-    sCamera.targetX = BATTLE_CAMERA_MAX_PAN_X * key->x;
-    sCamera.targetY = -BATTLE_CAMERA_MAX_PAN_Y * key->y;
+    sCamera.targetX = panLimit * key->x;
+    sCamera.targetY = -BATTLE_CAMERA_IDLE_PAN_Y * key->y;
     sCamera.targetZoom = 256 + (BATTLE_CAMERA_MAX_ZOOM - 256) * key->zoom / 256;
     sCamera.frame = 0;
 }
@@ -227,14 +238,18 @@ static s32 DepthWeight(s32 sourceY)
 
 static s32 PanAt(s32 sourceY)
 {
+    s32 weight;
+    if (sMoveCamera.active && sMoveBlend == 256)
+        return sCamera.x / 256;
+    weight = DepthWeight(sourceY);
     if (sMoveCamera.active)
-        return sCamera.x / 256; // Common translation preserves projectile endpoints.
-    return sCamera.x * DepthWeight(sourceY) / 65536;
+        weight += (256 - weight) * sMoveBlend / 256;
+    return sCamera.x * weight / 65536;
 }
 
 static s32 GroundY(s32 sourceY)
 {
-    if (sMoveCamera.active && sCamera.zoom == 256)
+    if (sMoveCamera.active && sMoveBlend == 256 && sCamera.zoom == 256)
         return sourceY - sCamera.y / 256;
     return BATTLE_CAMERA_HORIZON
          + ((sourceY - BATTLE_CAMERA_HORIZON) * 256 - sCamera.y) * sCamera.zoom / 65536;
@@ -250,7 +265,7 @@ static bool32 BuildRows(void)
                     + ((((s32)row - BATTLE_CAMERA_HORIZON) * inverseZoom / 256
                     + sCamera.y) / 256);
         s32 sourceX = PanAt(sourceY);
-        if (sMoveCamera.active && sCamera.zoom == 256)
+        if (sMoveCamera.active && sMoveBlend == 256 && sCamera.zoom == 256)
             sourceY = (s32)row + sCamera.y / 256;
         // Validate unwrapped coordinates before encoding GBA register bits.
         // Negative Y samples address the explicitly mirrored map rows30/31.
@@ -309,11 +324,19 @@ static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
     // Image, split shadows, and floor use the same ground-contact transform.
     sprite->x = anchorX - PanAt(anchorY)
               + (sprite->x + sprite->x2 - anchorX) * scale / 256 - sprite->x2;
-    if (sMoveCamera.active)
-        sprite->y = GroundY(sprite->y + sprite->y2) - sprite->y2;
-    else
-        sprite->y = GroundY(anchorY)
-                  + (sprite->y + sprite->y2 - anchorY) * scale / 256 - sprite->y2;
+    {
+        s32 originalY = sprite->y + sprite->y2;
+        s32 projectedY;
+        if (sMoveCamera.active && sMoveBlend == 256)
+            projectedY = GroundY(originalY);
+        else
+        {
+            projectedY = GroundY(anchorY) + (originalY - anchorY) * scale / 256;
+            if (sMoveCamera.active)
+                projectedY += (GroundY(originalY) - projectedY) * sMoveBlend / 256;
+        }
+        sprite->y = projectedY - sprite->y2;
+    }
     if (scale == 256)
         return TRUE;
     matrix = AllocOamMatrix();
@@ -361,7 +384,7 @@ void BattleCamera_BeginFrame(void)
     }
 
     if (!BATTLE_CAMERA_DEMO || !sSceneReady || !gMain.inBattle || !gBattleSpritesDataPtr
-        || (gBattlersCount < 2 || gBattlersCount > MAX_BATTLERS_COUNT) || !InBattleChoosingMoves() || gPaletteFade.active
+        || (gBattlersCount < 2 || gBattlersCount > MAX_BATTLERS_COUNT) || gPaletteFade.active
         || gAnimScriptActive || gBattle_BG3_X || gBattle_BG3_Y
         || gSpriteCoordOffsetX || gSpriteCoordOffsetY)
     {
@@ -369,6 +392,32 @@ void BattleCamera_BeginFrame(void)
         return;
     }
     if (sCamera.active && !HasScanlineLease())
+    {
+        BattleCamera_Cancel();
+        return;
+    }
+    if (sMenuReturning || (!InBattleChoosingMoves() && sCamera.active))
+    {
+        if (!sMenuReturning)
+        {
+            sMenuReturning = TRUE;
+            sMenuReturnTick = 0;
+            sCamera.startX = sCamera.x;
+            sCamera.startY = sCamera.y;
+            sCamera.startZoom = sCamera.zoom;
+        }
+        sMenuReturnTick++;
+        sCamera.x = sCamera.startX + Ease(-sCamera.startX, sMenuReturnTick, BATTLE_CAMERA_HANDOFF_TICKS);
+        sCamera.y = sCamera.startY + Ease(-sCamera.startY, sMenuReturnTick, BATTLE_CAMERA_HANDOFF_TICKS);
+        sCamera.zoom = sCamera.startZoom + Ease(256 - sCamera.startZoom, sMenuReturnTick, BATTLE_CAMERA_HANDOFF_TICKS);
+        if (sMenuReturnTick == BATTLE_CAMERA_HANDOFF_TICKS)
+        {
+            BattleCamera_Cancel();
+            return;
+        }
+        goto compose;
+    }
+    if (!InBattleChoosingMoves())
     {
         BattleCamera_Cancel();
         return;
@@ -413,7 +462,7 @@ compose:
         scale = 256 + (sCamera.zoom - 256)
               * (256 - BATTLE_CAMERA_PERSPECTIVE + DepthWeight(anchorY) * BATTLE_CAMERA_PERSPECTIVE / 256) / 256;
         if (sMoveCamera.active)
-            scale = sCamera.zoom;
+            scale += (sCamera.zoom - scale) * sMoveBlend / 256;
         if (!TransformSprite(id, anchorX, anchorY, scale))
             goto cancel;
         if (GetBattlerSide(battler) == B_SIDE_OPPONENT)
@@ -528,6 +577,10 @@ static void ResolveMoveTargets(u8 type)
 static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script)
 {
     u32 i;
+    s16 oldX = sCamera.x, oldY = sCamera.y, oldZoom = sCamera.zoom;
+    u16 oldBlend = sMoveCamera.active ? sMoveBlend : 0;
+    bool32 inherit = sCamera.active && HasScanlineLease()
+                  && (oldX != 0 || oldY != 0 || oldZoom != 256);
     BattleCamera_Cancel();
     if (!BATTLE_CAMERA_DEMO || !sSceneReady || !gMain.inBattle || !gBattleSpritesDataPtr
         || !gBattleSpritesDataPtr->battlerData || !gBattleSpritesDataPtr->healthBoxesData
@@ -575,6 +628,14 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
         sMoveCamera.phase = CAMERA_PHASE_ATTACK_PRESENTATION;
         return; // Deliberately stable, widest supported neutral composition.
     }
+    if (inherit && !sMoveCamera.blocked)
+    {
+        sCamera.x = oldX;
+        sCamera.y = oldY;
+        sCamera.zoom = oldZoom;
+        sMoveBlend = sHandoffStartBlend = oldBlend;
+        sHandoffTick = 0;
+    }
     SetMoveGoal(sMoveCamera.profile == MOVE_CAMERA_MELEE || sMoveCamera.profile == MOVE_CAMERA_SPECIAL
                 ? attacker : sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].start,
                 sMoveProfiles[sMoveCamera.profile].zoom);
@@ -592,15 +653,15 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
     {
         s32 x = gSprites[gBattlerSpriteIds[focus]].x;
         s32 y = GetBattlerSpriteCoord(focus, BATTLER_COORD_Y);
-        sCamera.targetX = max(0, min(BATTLE_CAMERA_MAX_PAN_X * 256,
-                            (x - BATTLE_CAMERA_FOCUS_LEFT_X) * BATTLE_CAMERA_MAX_PAN_X * 256 / BATTLE_CAMERA_FOCUS_SPAN_X)) * min(profile->pan, 256) / 256;
+        sCamera.targetX = max(0, min(BATTLE_CAMERA_MOVE_PAN_X * 256,
+                            (x - BATTLE_CAMERA_FOCUS_LEFT_X) * BATTLE_CAMERA_MOVE_PAN_X * 256 / BATTLE_CAMERA_FOCUS_SPAN_X)) * min(profile->pan, 256) / 256;
         sCamera.targetY = -max(0, min(BATTLE_CAMERA_MAX_PAN_Y * 256,
                             (BATTLE_CAMERA_NEAR_CONTACT - y) * BATTLE_CAMERA_MAX_PAN_Y * 256
                             / (BATTLE_CAMERA_NEAR_CONTACT - BATTLE_CAMERA_HORIZON)));
         sCamera.targetZoom = 256 + min(zoom, BATTLE_CAMERA_MAX_ZOOM - 256);
     }
     sMoveCamera.elapsed = 0;
-    sMoveCamera.duration = max(1, duration);
+    sMoveCamera.duration = max(max(1, duration), BATTLE_CAMERA_HANDOFF_TICKS - sHandoffTick);
 }
 
 static void EndMoveNow(void)
@@ -711,6 +772,11 @@ static bool32 UpdateMoveCamera(void)
         if (sOwnsScanlines || !BuildRows() || !AcquireScanlines())
             goto cancel;
         sCamera.active = TRUE;
+    }
+    if (sHandoffTick < BATTLE_CAMERA_HANDOFF_TICKS)
+    {
+        u16 weight = Ease(256, ++sHandoffTick, BATTLE_CAMERA_HANDOFF_TICKS);
+        sMoveBlend = sHandoffStartBlend + (256 - sHandoffStartBlend) * weight / 256;
     }
     if (sMoveCamera.elapsed < sMoveCamera.duration)
     {

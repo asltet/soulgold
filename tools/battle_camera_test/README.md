@@ -122,3 +122,17 @@ faux3d-move-camera-testing.md and faux3d-move-camera-compatibility.md. Rebuild a
 ROM in the working tool environment, enable battle animations, and test multiple
 successive executed moves. With battle scenes/headless animations disabled,
 no move camera is forced over an animation the engine skips.
+
+## Smooth handoff and stronger idle framing (2026-11-07)
+
+Menu exit now eases to neutral over16 logical updates. A compatible moving
+profile starting sooner inherits the pose and blends rendering models. Safety
+fallbacks for incompatible scripts/resources remain neutral. The native test
+checks peak-idle exit, first-frame continuity, completed blend and cleanup.
+
+Idle singles pan is16px, doubles12px; move pan remains12px. Idle vertical pan
+is2px and parallax attenuation160/256. Zoom,900-update initial wait and track
+durations are unchanged. All six tracks emphasize lateral movement. Settings
+live in include/battle_camera.h; keys in src/data/battle_camera_tracks.h.
+Read reports/faux3d-camera-handoff-and-idle-tuning.md in the parent workspace
+for validation limits and the pending emulator checklist.

@@ -189,13 +189,20 @@ int main(void)
     for (track = 0; track < ARRAY_COUNT(sIdleTracks); track++)
     {
         u32 duration = 0, n;
+        u16 minX = 256, maxX = 0;
         const struct CameraTrack *spec = &sIdleTracks[track];
         for (i = 0; i < spec->count; i++)
         {
             assert(spec->keys[i].duration > 0);
             assert(spec->keys[i].x <= 256 && spec->keys[i].y <= 256 && spec->keys[i].zoom <= 256);
             duration += spec->keys[i].duration;
+            if (i + 1 < spec->count)
+            {
+                minX = min(minX, spec->keys[i].x);
+                maxX = max(maxX, spec->keys[i].x);
+            }
         }
+        assert(maxX - minX >= 160); // Every idle family has a meaningful lateral sweep.
         ForceTrack(track);
         for (n = 0; n < duration; n++)
         {
@@ -208,6 +215,12 @@ int main(void)
         Tick(0); // No new 900-update wait between completed idle scripts.
         assert(sCamera.active && sCamera.track != track);
     }
+
+    ForceTrack(0);
+    for (i = 0; i < 90; i++) Tick(0);
+    assert(PanAt(BATTLE_CAMERA_NEAR_CONTACT) == 16);
+    assert(PanAt(BATTLE_CAMERA_HORIZON) == 6);
+    assert(sCamera.y == -BATTLE_CAMERA_IDLE_PAN_Y * 256);
 
     // Cosmetic selection has six outcomes and forbids consecutive repeats.
     Ready();
@@ -228,7 +241,14 @@ int main(void)
     ForceTrack(0);
     for (i = 0; i < 100; i++) Tick(0);
     sChoosing = FALSE;
-    Tick(0);
+    {
+        s16 beforeX = sCamera.x;
+        s16 beforeZoom = sCamera.zoom;
+        Tick(0);
+        assert(sCamera.active && sMenuReturning && sCamera.zoom > 256);
+        assert(sCamera.x > 0 && sCamera.x <= beforeX && sCamera.zoom <= beforeZoom);
+        for (i = 1; i < BATTLE_CAMERA_HANDOFF_TICKS; i++) Tick(0);
+    }
     assert(!sCamera.active && !sOwnsScanlines && sLastTrack == 0);
     sChoosing = TRUE;
     for (i = 0; i < BATTLE_CAMERA_WAIT_TICKS; i++)
@@ -271,7 +291,7 @@ int main(void)
     assert(sCamera.zoom == 284);
     assert(gOamMatrices[gSprites[0].oam.matrixNum].b == -230);
     assert(gOamMatrices[gSprites[0].oam.matrixNum].c == 230);
-    assert(gOamMatrices[gSprites[1].oam.matrixNum].a == -232);
+    assert(gOamMatrices[gSprites[1].oam.matrixNum].a == -233);
     gMain.oamLoadDisabled = TRUE;
     {
         u8 previous = gScanlineEffect.srcBuffer;
@@ -363,6 +383,37 @@ static void TestMoveCamera(void)
         assert(!sMoveCamera.active && sCamera.x == oldX && gScanlineEffectGeneration == generation);
         Tick(0);
         assert(sMoveCamera.active && gScanlineEffectGeneration != generation);
+        FinishTestMove();
+    }
+    // A rapid executed move inherits a fully displaced idle pose, not neutral.
+    ForceTrack(0);
+    for (i = 0; i < 90; i++) Tick(0);
+    {
+        s16 oldDrawX[2], oldDrawY[2];
+        BattleCamera_BeginFrame();
+        for (i = 0; i < 2; i++)
+        {
+            oldDrawX[i] = gSprites[gBattlerSpriteIds[i]].x;
+            oldDrawY[i] = gSprites[gBattlerSpriteIds[i]].y;
+        }
+        BattleCamera_EndFrame();
+        gAnimScriptActive = TRUE;
+        sChoosing = FALSE;
+        BattleCamera_InterruptAnimation();
+        BattleCamera_StartMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+        BattleCamera_BeginFrame();
+        assert(sMoveCamera.active && sCamera.x > 0 && sCamera.zoom > 256);
+        assert(sMoveCamera.duration >= BATTLE_CAMERA_HANDOFF_TICKS);
+        assert(sMoveBlend < 256);
+        for (i = 0; i < 2; i++)
+        {
+            assert(abs(gSprites[gBattlerSpriteIds[i]].x - oldDrawX[i]) <= 1);
+            assert(abs(gSprites[gBattlerSpriteIds[i]].y - oldDrawY[i]) <= 1);
+        }
+        BattleCamera_EndFrame();
+        assert(memcmp(sOriginal, gSprites, sizeof(sOriginal)) == 0 && sAllocated == 0);
+        for (i = 1; i < BATTLE_CAMERA_HANDOFF_TICKS; i++) Tick(0);
+        assert(sMoveBlend == 256);
         FinishTestMove();
     }
     // First, second, third and subsequent executed moves, on both sides.

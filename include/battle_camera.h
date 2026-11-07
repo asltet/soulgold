@@ -6,13 +6,17 @@
 #define BATTLE_CAMERA_DEMO TRUE
 #define BATTLE_CAMERA_MAX_SCENE_SPRITES 24
 #define BATTLE_CAMERA_MOVE_MAX_TICKS 1200
+#define BATTLE_CAMERA_HANDOFF_TICKS 16
 #define BATTLE_CAMERA_FOCUS_LEFT_X 72
 #define BATTLE_CAMERA_FOCUS_SPAN_X 128
 #define BATTLE_CAMERA_MAX_ZOOM 288          // 1.125x near visible scale.
-#define BATTLE_CAMERA_MAX_PAN_X 12          // Rightward camera pan, pixels.
+#define BATTLE_CAMERA_MAX_PAN_X 16          // Idle/source envelope, pixels.
+#define BATTLE_CAMERA_MOVE_PAN_X 12         // Preserve audited move framing.
+#define BATTLE_CAMERA_IDLE_DOUBLES_PAN_X 12 // Preserve the near edge in doubles.
+#define BATTLE_CAMERA_IDLE_PAN_Y 2          // Less vertical scenery deformation.
 #define BATTLE_CAMERA_MAX_PAN_Y 4           // Upward camera pan, pixels.
 #define BATTLE_CAMERA_PERSPECTIVE 64        // Far image-scale attenuation.
-#define BATTLE_CAMERA_PARALLAX 128          // Far pan attenuation (0 = uniform).
+#define BATTLE_CAMERA_PARALLAX 160          // Far pan attenuation (0 = uniform).
 #define BATTLE_CAMERA_EASING_SMOOTHSTEP 1
 #define BATTLE_CAMERA_EASING BATTLE_CAMERA_EASING_SMOOTHSTEP // 0 = linear.
 #define BATTLE_CAMERA_WAIT_TICKS 900        // BW2 normal initial idle threshold.
@@ -29,8 +33,17 @@
 #if BATTLE_CAMERA_MAX_PAN_X < 0 || BATTLE_CAMERA_MAX_PAN_X > 16 || BATTLE_CAMERA_MAX_PAN_Y < 0 || BATTLE_CAMERA_MAX_PAN_Y > 16
 #error Camera pan exceeds the prepared Plain artwork margins
 #endif
+#if BATTLE_CAMERA_IDLE_DOUBLES_PAN_X < 0 || BATTLE_CAMERA_IDLE_DOUBLES_PAN_X > BATTLE_CAMERA_MAX_PAN_X
+#error Invalid doubles idle pan
+#endif
+#if BATTLE_CAMERA_MOVE_PAN_X < 0 || BATTLE_CAMERA_MOVE_PAN_X > BATTLE_CAMERA_MAX_PAN_X || BATTLE_CAMERA_IDLE_PAN_Y < 0 || BATTLE_CAMERA_IDLE_PAN_Y > BATTLE_CAMERA_MAX_PAN_Y
+#error Idle/move tuning exceeds the prepared camera envelope
+#endif
 #if BATTLE_CAMERA_PARALLAX < 0 || BATTLE_CAMERA_PARALLAX > 256 || BATTLE_CAMERA_PERSPECTIVE < 0 || BATTLE_CAMERA_PERSPECTIVE > 256
 #error Camera strength must be in the range 0..256
+#endif
+#if BATTLE_CAMERA_HANDOFF_TICKS < 1 || BATTLE_CAMERA_HANDOFF_TICKS > 120
+#error Invalid camera handoff duration
 #endif
 #if BATTLE_CAMERA_MAX_SCENE_SPRITES < 12 || BATTLE_CAMERA_MAX_SCENE_SPRITES > 64
 #error Invalid camera snapshot capacity
