@@ -1,6 +1,8 @@
 #include "global.h"
 #include "battle.h"
 #include "battle_anim.h"
+#include "battle_anim_scripts.h"
+#include "constants/battle_anim.h"
 #include "battle_main.h"
 #include "battle_camera.h"
 #include "main.h"
@@ -43,7 +45,7 @@ struct CameraSpriteBackup
 };
 
 static EWRAM_DATA struct BattleCamera sCamera = {0};
-static EWRAM_DATA struct CameraSpriteBackup sBackups[MAX_BATTLERS_COUNT * 3] = {0};
+static EWRAM_DATA struct CameraSpriteBackup sBackups[BATTLE_CAMERA_MAX_SCENE_SPRITES] = {0};
 static EWRAM_DATA u8 sBackupCount = 0;
 static EWRAM_DATA u16 sIdleFrames = 0;
 static EWRAM_DATA u16 sWaitTicks = 0;
@@ -55,6 +57,72 @@ static EWRAM_DATA u32 sScanlineGeneration = 0;
 // Include the transfer after the final visible row. Main-loop scratch only;
 // the completed table is published into the engine's DMA buffer in VBlank.
 static EWRAM_DATA u32 ALIGNED(4) sRows[DISPLAY_HEIGHT + 1] = {0};
+
+enum MoveCameraProfileId
+{
+    MOVE_CAMERA_MELEE,
+    MOVE_CAMERA_PHYSICAL,
+    MOVE_CAMERA_SPECIAL,
+    MOVE_CAMERA_SELF,
+    MOVE_CAMERA_ALLY,
+    MOVE_CAMERA_GROUP,
+};
+
+enum MoveCameraTargetClass
+{
+    CAMERA_TARGET_NONE,
+    CAMERA_TARGET_OPPONENT,
+    CAMERA_TARGET_SELF,
+    CAMERA_TARGET_ALLY,
+    CAMERA_TARGET_GROUP,
+    CAMERA_TARGET_FIELD,
+};
+
+struct MoveCameraProfile
+{
+    u8 start, travel, impact, restore;
+    u16 pan, zoom;
+    u8 easing;
+};
+struct MoveCameraOverride
+{
+    u16 move;
+    u8 profile;
+    const u8 *script;
+};
+struct MoveCameraState
+{
+    bool8 active, blocked;
+    u8 attacker, target, targetMask, actorMask;
+    u8 profile, targetClass, phase, battlerCount;
+    u8 actorSprite[MAX_BATTLERS_COUNT];
+    const struct SpriteFrameImage *actorImages[MAX_BATTLERS_COUNT];
+    u32 effects[2];
+    u16 age, elapsed, duration;
+};
+
+#include "data/battle_camera_move_profiles.h"
+static EWRAM_DATA struct MoveCameraState sMoveCamera = {0};
+
+enum MoveCameraEvent
+{
+    CAMERA_EVENT_NONE,
+    CAMERA_EVENT_START,
+    CAMERA_EVENT_END,
+    CAMERA_EVENT_CANCEL,
+};
+struct MoveCameraRequest
+{
+    u16 move;
+    u8 event, attacker, target, targetType;
+    const u8 *script;
+};
+static EWRAM_DATA struct MoveCameraRequest sMoveRequest = {0};
+
+static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script);
+static void EndMoveNow(void);
+static bool32 UpdateMoveCamera(void);
+static void SetMoveGoal(u8 focus, u16 duration, u16 zoom);
 
 static bool32 HasScanlineLease(void)
 {
@@ -71,6 +139,8 @@ void BattleCamera_Cancel(void)
     if (HasScanlineLease())
         ScanlineEffect_Stop();
     sOwnsScanlines = FALSE;
+    sMoveRequest.event = CAMERA_EVENT_NONE;
+    memset(&sMoveCamera, 0, sizeof(sMoveCamera));
     memset(&sCamera, 0, sizeof(sCamera));
     sCamera.zoom = sCamera.targetZoom = 256;
     sIdleFrames = 0;
@@ -157,11 +227,15 @@ static s32 DepthWeight(s32 sourceY)
 
 static s32 PanAt(s32 sourceY)
 {
+    if (sMoveCamera.active)
+        return sCamera.x / 256; // Common translation preserves projectile endpoints.
     return sCamera.x * DepthWeight(sourceY) / 65536;
 }
 
 static s32 GroundY(s32 sourceY)
 {
+    if (sMoveCamera.active && sCamera.zoom == 256)
+        return sourceY - sCamera.y / 256;
     return BATTLE_CAMERA_HORIZON
          + ((sourceY - BATTLE_CAMERA_HORIZON) * 256 - sCamera.y) * sCamera.zoom / 65536;
 }
@@ -176,6 +250,8 @@ static bool32 BuildRows(void)
                     + ((((s32)row - BATTLE_CAMERA_HORIZON) * inverseZoom / 256
                     + sCamera.y) / 256);
         s32 sourceX = PanAt(sourceY);
+        if (sMoveCamera.active && sCamera.zoom == 256)
+            sourceY = (s32)row + sCamera.y / 256;
         // Validate unwrapped coordinates before encoding GBA register bits.
         // Negative Y samples address the explicitly mirrored map rows30/31.
         if (sourceY < BATTLE_CAMERA_SOURCE_MIN_Y || sourceY > BATTLE_CAMERA_SOURCE_MAX_Y
@@ -218,8 +294,11 @@ static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
         if (sBackups[i].id == id)
             return TRUE;
     sprite = &gSprites[id];
-    if (!sprite->inUse || sprite->invisible)
+    if (!sprite->inUse || sprite->invisible || sprite->oam.affineMode == ST_OAM_AFFINE_ERASE)
         return TRUE;
+    if (sprite->x + sprite->x2 < -512 || sprite->x + sprite->x2 > 1024
+        || sprite->y + sprite->y2 < -512 || sprite->y + sprite->y2 > 1024)
+        return FALSE; // Bound all projection products before applying fixed-point math.
     if (sprite->subspriteMode != SUBSPRITES_OFF || sBackupCount >= ARRAY_COUNT(sBackups))
         return FALSE;
     backup = &sBackups[sBackupCount++];
@@ -230,8 +309,11 @@ static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
     // Image, split shadows, and floor use the same ground-contact transform.
     sprite->x = anchorX - PanAt(anchorY)
               + (sprite->x + sprite->x2 - anchorX) * scale / 256 - sprite->x2;
-    sprite->y = GroundY(anchorY)
-              + (sprite->y + sprite->y2 - anchorY) * scale / 256 - sprite->y2;
+    if (sMoveCamera.active)
+        sprite->y = GroundY(sprite->y + sprite->y2) - sprite->y2;
+    else
+        sprite->y = GroundY(anchorY)
+                  + (sprite->y + sprite->y2 - anchorY) * scale / 256 - sprite->y2;
     if (scale == 256)
         return TRUE;
     matrix = AllocOamMatrix();
@@ -259,6 +341,24 @@ static bool32 TransformSprite(u8 id, s16 anchorX, s16 anchorY, s16 scale)
 void BattleCamera_BeginFrame(void)
 {
     u32 battler;
+    u8 event = sMoveRequest.event;
+
+    // VM/controller events publish only inside the existing OAM transaction.
+    sMoveRequest.event = CAMERA_EVENT_NONE;
+    if (event == CAMERA_EVENT_START)
+        StartMoveNow(sMoveRequest.move, sMoveRequest.attacker, sMoveRequest.target,
+                     sMoveRequest.targetType, sMoveRequest.script);
+    else if (event == CAMERA_EVENT_CANCEL)
+        BattleCamera_Cancel();
+    else if (event == CAMERA_EVENT_END)
+        EndMoveNow();
+
+    if (sMoveCamera.active)
+    {
+        if (!UpdateMoveCamera())
+            return;
+        goto compose;
+    }
 
     if (!BATTLE_CAMERA_DEMO || !sSceneReady || !gMain.inBattle || !gBattleSpritesDataPtr
         || (gBattlersCount < 2 || gBattlersCount > MAX_BATTLERS_COUNT) || !InBattleChoosingMoves() || gPaletteFade.active
@@ -294,6 +394,8 @@ void BattleCamera_BeginFrame(void)
     }
     if (!AdvanceTrack())
         return;
+
+compose:
     if (!BuildRows())
         goto cancel;
     for (battler = 0; battler < gBattlersCount; battler++)
@@ -310,6 +412,8 @@ void BattleCamera_BeginFrame(void)
             anchorY += 8; // Matches GetBattlerSpriteFinal_Y's player adjustment.
         scale = 256 + (sCamera.zoom - 256)
               * (256 - BATTLE_CAMERA_PERSPECTIVE + DepthWeight(anchorY) * BATTLE_CAMERA_PERSPECTIVE / 256) / 256;
+        if (sMoveCamera.active)
+            scale = sCamera.zoom;
         if (!TransformSprite(id, anchorX, anchorY, scale))
             goto cancel;
         if (GetBattlerSide(battler) == B_SIDE_OPPONENT)
@@ -321,6 +425,16 @@ void BattleCamera_BeginFrame(void)
                 goto cancel;
         }
     }
+    if (sMoveCamera.active)
+    {
+        u32 id;
+        for (id = 0; id < MAX_SPRITES; id++)
+            if ((sMoveCamera.effects[id / 32] & (1u << (id % 32))) && gSprites[id].inUse)
+                if (!TransformSprite(id, gSprites[id].x + gSprites[id].x2,
+                                      gSprites[id].y + gSprites[id].y2, sCamera.zoom))
+                    goto cancel;
+    }
+
     return;
 
 cancel:
@@ -355,3 +469,277 @@ void BattleCamera_PublishScanlines(void)
 // copy: the outer VBlank GPU flush may occur after the battle callback.
 s16 BattleCamera_GetBgX(void) { return HasScanlineLease() ? sRows[0] & 0x1FF : 0; }
 s16 BattleCamera_GetBgY(void) { return HasScanlineLease() ? (sRows[0] >> 16) & 0x1FF : 0; }
+
+// Actual executed targets enter here, before any animation-only target rewrite.
+static bool32 VisibleMoveBattler(u8 battler)
+{
+    u8 sprite;
+    if (battler >= gBattlersCount || (gAbsentBattlerFlags & (1u << battler)) || !gBattleMons[battler].hp)
+        return FALSE;
+    sprite = gBattlerSpriteIds[battler];
+    return sprite < MAX_SPRITES && gSprites[sprite].inUse && !gSprites[sprite].invisible
+        && gSprites[sprite].oam.affineMode != ST_OAM_AFFINE_ERASE;
+}
+
+static void ResolveMoveTargets(u8 type)
+{
+    u32 i;
+    u8 attacker = sMoveCamera.attacker;
+    u8 target = sMoveCamera.target;
+    sMoveCamera.targetClass = CAMERA_TARGET_NONE;
+    switch (type)
+    {
+    case TARGET_NONE:
+    case TARGET_FIELD:
+    case TARGET_OPPONENTS_FIELD:
+        sMoveCamera.targetClass = CAMERA_TARGET_FIELD;
+        return;
+    case TARGET_BOTH:
+    case TARGET_FOES_AND_ALLY:
+    case TARGET_ALL_BATTLERS:
+    case TARGET_USER_AND_ALLY:
+        sMoveCamera.targetClass = CAMERA_TARGET_GROUP;
+        for (i = 0; i < gBattlersCount; i++)
+            if (VisibleMoveBattler(i)
+                && (type == TARGET_ALL_BATTLERS
+                    || (type == TARGET_BOTH && GetBattlerSide(i) != GetBattlerSide(attacker))
+                    || (type == TARGET_FOES_AND_ALLY && i != attacker)
+                    || (type == TARGET_USER_AND_ALLY && GetBattlerSide(i) == GetBattlerSide(attacker))))
+                sMoveCamera.targetMask |= 1u << i;
+        return;
+    case TARGET_USER:
+        target = attacker;
+        sMoveCamera.target = attacker;
+        break;
+    default:
+        break;
+    }
+    if (!VisibleMoveBattler(target))
+        return;
+    if ((type == TARGET_ALLY || type == TARGET_USER_OR_ALLY)
+        && GetBattlerSide(target) != GetBattlerSide(attacker))
+        return;
+    sMoveCamera.targetMask = 1u << target;
+    sMoveCamera.targetClass = target == attacker ? CAMERA_TARGET_SELF
+                           : GetBattlerSide(target) == GetBattlerSide(attacker) ? CAMERA_TARGET_ALLY
+                           : CAMERA_TARGET_OPPONENT;
+}
+
+static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script)
+{
+    u32 i;
+    BattleCamera_Cancel();
+    if (!BATTLE_CAMERA_DEMO || !sSceneReady || !gMain.inBattle || !gBattleSpritesDataPtr
+        || !gBattleSpritesDataPtr->battlerData || !gBattleSpritesDataPtr->healthBoxesData
+        || gBattlersCount < 2 || gBattlersCount > MAX_BATTLERS_COUNT || !VisibleMoveBattler(attacker))
+        return;
+    sMoveCamera.active = TRUE;
+    sMoveCamera.blocked = TRUE;
+    sMoveCamera.battlerCount = gBattlersCount;
+    sMoveCamera.attacker = attacker;
+    sMoveCamera.target = target;
+    sMoveCamera.phase = CAMERA_PHASE_MOVE_START;
+    ResolveMoveTargets(targetType);
+    if (sMoveCamera.targetClass == CAMERA_TARGET_NONE)
+        return;
+    for (i = 0; i < ARRAY_COUNT(sMoveOverrides); i++)
+        if (sMoveOverrides[i].move == move && sMoveOverrides[i].script == script)
+        {
+            sMoveCamera.profile = sMoveOverrides[i].profile;
+            sMoveCamera.blocked = FALSE;
+            break;
+        }
+    if (sMoveCamera.blocked)
+        return;
+    if (sMoveCamera.targetClass == CAMERA_TARGET_SELF)
+        sMoveCamera.profile = MOVE_CAMERA_SELF;
+    else if (sMoveCamera.targetClass == CAMERA_TARGET_ALLY)
+        sMoveCamera.profile = MOVE_CAMERA_ALLY;
+    else if (sMoveCamera.targetClass == CAMERA_TARGET_GROUP || sMoveCamera.targetClass == CAMERA_TARGET_FIELD)
+        sMoveCamera.profile = MOVE_CAMERA_GROUP;
+    for (i = 0; i < gBattlersCount; i++)
+    {
+        u8 id = gBattlerSpriteIds[i];
+        sMoveCamera.actorSprite[i] = id;
+        if (id < MAX_SPRITES)
+            sMoveCamera.actorImages[i] = gSprites[id].images;
+        if (VisibleMoveBattler(i))
+        {
+            sMoveCamera.actorMask |= 1u << i;
+            if (gBattleSpritesDataPtr->battlerData[i].behindSubstitute)
+                sMoveCamera.blocked = TRUE;
+        }
+    }
+    if (sMoveCamera.profile == MOVE_CAMERA_GROUP)
+    {
+        sMoveCamera.phase = CAMERA_PHASE_ATTACK_PRESENTATION;
+        return; // Deliberately stable, widest supported neutral composition.
+    }
+    SetMoveGoal(sMoveCamera.profile == MOVE_CAMERA_MELEE || sMoveCamera.profile == MOVE_CAMERA_SPECIAL
+                ? attacker : sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].start,
+                sMoveProfiles[sMoveCamera.profile].zoom);
+}
+
+static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
+{
+    const struct MoveCameraProfile *profile = &sMoveProfiles[sMoveCamera.profile];
+    sCamera.startX = sCamera.x;
+    sCamera.startY = sCamera.y;
+    sCamera.startZoom = sCamera.zoom;
+    sCamera.targetX = sCamera.targetY = 0;
+    sCamera.targetZoom = 256;
+    if (focus < gBattlersCount && VisibleMoveBattler(focus))
+    {
+        s32 x = gSprites[gBattlerSpriteIds[focus]].x;
+        s32 y = GetBattlerSpriteCoord(focus, BATTLER_COORD_Y);
+        sCamera.targetX = max(0, min(BATTLE_CAMERA_MAX_PAN_X * 256,
+                            (x - BATTLE_CAMERA_FOCUS_LEFT_X) * BATTLE_CAMERA_MAX_PAN_X * 256 / BATTLE_CAMERA_FOCUS_SPAN_X)) * min(profile->pan, 256) / 256;
+        sCamera.targetY = -max(0, min(BATTLE_CAMERA_MAX_PAN_Y * 256,
+                            (BATTLE_CAMERA_NEAR_CONTACT - y) * BATTLE_CAMERA_MAX_PAN_Y * 256
+                            / (BATTLE_CAMERA_NEAR_CONTACT - BATTLE_CAMERA_HORIZON)));
+        sCamera.targetZoom = 256 + min(zoom, BATTLE_CAMERA_MAX_ZOOM - 256);
+    }
+    sMoveCamera.elapsed = 0;
+    sMoveCamera.duration = max(1, duration);
+}
+
+static void EndMoveNow(void)
+{
+    if (!sMoveCamera.active)
+        return;
+    if (sMoveCamera.blocked || sMoveCamera.profile == MOVE_CAMERA_GROUP)
+    {
+        BattleCamera_Cancel();
+        return;
+    }
+    if (sMoveCamera.phase != CAMERA_PHASE_RETURN)
+    {
+        sMoveCamera.phase = CAMERA_PHASE_RETURN;
+        SetMoveGoal(MAX_BATTLERS_COUNT, sMoveProfiles[sMoveCamera.profile].restore, 0);
+    }
+}
+
+void BattleCamera_StartMove(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script)
+{
+    sMoveRequest.move = move;
+    sMoveRequest.attacker = attacker;
+    sMoveRequest.target = target;
+    sMoveRequest.targetType = targetType;
+    sMoveRequest.script = script;
+    sMoveRequest.event = CAMERA_EVENT_START;
+}
+
+void BattleCamera_InterruptAnimation(void)
+{
+    sMoveRequest.event = CAMERA_EVENT_CANCEL;
+}
+
+void BattleCamera_EndMove(void)
+{
+    if (sMoveRequest.event == CAMERA_EVENT_CANCEL)
+        return;
+    // A zero-update animation needs neutral cleanup, not an artificial shot.
+    sMoveRequest.event = sMoveRequest.event == CAMERA_EVENT_START ? CAMERA_EVENT_CANCEL : CAMERA_EVENT_END;
+}
+
+void BattleCamera_BlockMove(void)
+{
+    // No partial cancellation between VM commands and the OAM snapshot boundary.
+    sMoveCamera.blocked = TRUE;
+    BattleCamera_InterruptAnimation();
+}
+
+void BattleCamera_OnSpriteCreated(u8 id, u16 tileTag)
+{
+    u32 i;
+    if (id >= MAX_SPRITES)
+        return;
+    sMoveCamera.effects[id / 32] &= ~(1u << (id % 32));
+    if (!sMoveCamera.active)
+        return;
+    for (i = 0; i < MAX_BATTLERS_COUNT; i++)
+        if ((sMoveCamera.actorMask & (1u << i)) && sMoveCamera.actorSprite[i] == id)
+        {
+            BattleCamera_BlockMove(); // Battler replacement invalidates the snapshot binding.
+            return;
+        }
+    if (sMoveCamera.blocked || !gAnimScriptActive)
+        return;
+    sMoveCamera.effects[id / 32] |= 1u << (id % 32);
+    if (tileTag == ANIM_TAG_IMPACT && sMoveCamera.profile <= MOVE_CAMERA_SPECIAL)
+    {
+        sMoveCamera.phase = CAMERA_PHASE_IMPACT;
+        SetMoveGoal(sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].impact,
+                    sMoveProfiles[sMoveCamera.profile].zoom);
+    }
+}
+
+static bool32 UpdateMoveCamera(void)
+{
+    u32 i;
+    const struct MoveCameraProfile *profile = &sMoveProfiles[sMoveCamera.profile];
+    if (!gMain.inBattle || !sSceneReady || !gBattleSpritesDataPtr
+        || gBattlersCount != sMoveCamera.battlerCount
+        || gPaletteFade.active || gBattle_BG3_X || gBattle_BG3_Y
+        || gSpriteCoordOffsetX || gSpriteCoordOffsetY
+        || ++sMoveCamera.age > BATTLE_CAMERA_MOVE_MAX_TICKS)
+        goto cancel;
+    if (sMoveCamera.blocked)
+    {
+        if (!gAnimScriptActive)
+            goto cancel;
+        return FALSE;
+    }
+    for (i = 0; i < gBattlersCount; i++)
+    {
+        if (gBattlerSpriteIds[i] != sMoveCamera.actorSprite[i])
+            goto cancel;
+        if (sMoveCamera.actorMask & (1u << i))
+        {
+            if (!VisibleMoveBattler(i) || gSprites[sMoveCamera.actorSprite[i]].images != sMoveCamera.actorImages[i])
+                goto cancel;
+        }
+        else if (VisibleMoveBattler(i))
+            goto cancel; // A new battler joined an otherwise unchanged slot.
+    }
+    if (!gAnimScriptActive)
+        EndMoveNow();
+    if (!sMoveCamera.active || sMoveCamera.profile == MOVE_CAMERA_GROUP)
+        return FALSE;
+    if (!HasScanlineLease())
+    {
+        if (sOwnsScanlines || !BuildRows() || !AcquireScanlines())
+            goto cancel;
+        sCamera.active = TRUE;
+    }
+    if (sMoveCamera.elapsed < sMoveCamera.duration)
+    {
+        u16 t = ++sMoveCamera.elapsed * 256 / sMoveCamera.duration;
+        s32 weight = profile->easing == BATTLE_CAMERA_EASING_SMOOTHSTEP
+                   ? t * t * (768 - 2 * t) / 65536 : t;
+        sCamera.x = sCamera.startX + (sCamera.targetX - sCamera.startX) * weight / 256;
+        sCamera.y = sCamera.startY + (sCamera.targetY - sCamera.startY) * weight / 256;
+        sCamera.zoom = sCamera.startZoom + (sCamera.targetZoom - sCamera.startZoom) * weight / 256;
+    }
+    if (sMoveCamera.elapsed == sMoveCamera.duration)
+    {
+        switch (sMoveCamera.phase)
+        {
+        case CAMERA_PHASE_MOVE_START:
+            sMoveCamera.phase = CAMERA_PHASE_TARGET_FOCUS;
+            SetMoveGoal(sMoveCamera.target, profile->travel, profile->zoom);
+            break;
+        case CAMERA_PHASE_TARGET_FOCUS:
+        case CAMERA_PHASE_IMPACT:
+            sMoveCamera.phase = CAMERA_PHASE_ATTACK_PRESENTATION;
+            break;
+        case CAMERA_PHASE_RETURN:
+            goto cancel;
+        }
+    }
+    return TRUE;
+
+cancel:
+    BattleCamera_Cancel();
+    return FALSE;
+}

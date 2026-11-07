@@ -4,6 +4,10 @@
 // Renderer limits; zoom/strength values have eight fractional bits.
 // Authored GBA track shapes/durations: src/data/battle_camera_tracks.h.
 #define BATTLE_CAMERA_DEMO TRUE
+#define BATTLE_CAMERA_MAX_SCENE_SPRITES 24
+#define BATTLE_CAMERA_MOVE_MAX_TICKS 1200
+#define BATTLE_CAMERA_FOCUS_LEFT_X 72
+#define BATTLE_CAMERA_FOCUS_SPAN_X 128
 #define BATTLE_CAMERA_MAX_ZOOM 288          // 1.125x near visible scale.
 #define BATTLE_CAMERA_MAX_PAN_X 12          // Rightward camera pan, pixels.
 #define BATTLE_CAMERA_MAX_PAN_Y 4           // Upward camera pan, pixels.
@@ -28,6 +32,12 @@
 #if BATTLE_CAMERA_PARALLAX < 0 || BATTLE_CAMERA_PARALLAX > 256 || BATTLE_CAMERA_PERSPECTIVE < 0 || BATTLE_CAMERA_PERSPECTIVE > 256
 #error Camera strength must be in the range 0..256
 #endif
+#if BATTLE_CAMERA_MAX_SCENE_SPRITES < 12 || BATTLE_CAMERA_MAX_SCENE_SPRITES > 64
+#error Invalid camera snapshot capacity
+#endif
+#if BATTLE_CAMERA_MOVE_MAX_TICKS < 1 || BATTLE_CAMERA_MOVE_MAX_TICKS > 3600 || BATTLE_CAMERA_FOCUS_SPAN_X < 1
+#error Invalid move camera watchdog or focus calibration
+#endif
 #if BATTLE_CAMERA_WAIT_TICKS < 1 || BATTLE_CAMERA_WAIT_TICKS > 3600
 #error Invalid camera initial idle delay
 #endif
@@ -38,6 +48,21 @@
 #error Unsupported camera easing
 #endif
 
+enum BattleCameraMovePhase
+{
+    CAMERA_PHASE_NEUTRAL,
+    CAMERA_PHASE_MOVE_START,
+    CAMERA_PHASE_TARGET_FOCUS,
+    CAMERA_PHASE_ATTACK_PRESENTATION,
+    CAMERA_PHASE_IMPACT,
+    CAMERA_PHASE_RETURN,
+};
+
+void BattleCamera_StartMove(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script);
+void BattleCamera_EndMove(void);
+void BattleCamera_InterruptAnimation(void);
+void BattleCamera_OnSpriteCreated(u8 spriteId, u16 tileTag);
+void BattleCamera_BlockMove(void);
 void BattleCamera_Reset(void);
 void BattleCamera_Cancel(void);
 void BattleCamera_SetEnvironment(u16 environment);

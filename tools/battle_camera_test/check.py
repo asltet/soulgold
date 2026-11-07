@@ -19,7 +19,7 @@ flags = ["-mthumb", "-mthumb-interwork", "-O2", "-mabi=apcs-gnu", "-mtune=arm7td
          "-Wno-strict-aliasing", "-Wno-attribute-alias", "-Woverride-init", "-Wnonnull",
          "-Wenum-conversion", "-Wno-error=unused-const-variable"]
 Path("build").mkdir(exist_ok=True)
-for name in ("battle_camera", "battle_main", "reshow_battle_screen", "battle_bg", "scanline_effect"):
+for name in ("battle_camera", "battle_main", "reshow_battle_screen", "battle_bg", "scanline_effect", "battle_anim", "battle_controllers", "sprite"):
     src = f"src/{name}.c"
     cpp = subprocess.run([gcc, "-E", "-iquote", "include", "-DMODERN=1", "-DTESTING=0",
                           "-DEMERALD", "-std=gnu17", src], capture_output=True, check=True)

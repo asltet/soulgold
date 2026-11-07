@@ -17,6 +17,18 @@ u8 gBattlersCount;
 u8 gBattlerPositions[MAX_BATTLERS_COUNT];
 u8 gBattlerSpriteIds[MAX_BATTLERS_COUNT];
 u32 gBattleTypeFlags;
+u8 gAbsentBattlerFlags;
+struct BattlePokemon gBattleMons[MAX_BATTLERS_COUNT];
+const u8 gBattleAnimMove_Headbutt[] = {1};
+const u8 gBattleAnimMove_Peck[] = {2};
+const u8 gBattleAnimMove_Ember[] = {3};
+const u8 gBattleAnimMove_Splash[] = {4};
+const u8 gBattleAnimMove_Withdraw[] = {5};
+const u8 gBattleAnimMove_HelpingHand[] = {6};
+const u8 gBattleAnimMove_Growl[] = {7};
+const u8 gBattleAnimMove_TailWhip[] = {8};
+const u8 gBattleAnimMove_RainDance[] = {9};
+
 u16 gBattle_BG3_X, gBattle_BG3_Y;
 s16 gSpriteCoordOffsetX, gSpriteCoordOffsetY;
 bool8 gAnimScriptActive;
@@ -129,12 +141,16 @@ static void ForceTrack(u8 track)
     BeginLeg();
 }
 
+static void TestMoveCamera(void);
+
 int main(void)
 {
     static struct BattleSpriteData data;
     static struct BattleHealthboxInfo boxes[MAX_BATTLERS_COUNT];
+    static struct BattleSpriteInfo battlerData[MAX_BATTLERS_COUNT];
     u32 i, track;
     data.healthBoxesData = boxes;
+    data.battlerData = battlerData;
     gBattleSpritesDataPtr = &data;
     gMain.inBattle = TRUE;
     gBattlersCount = 2;
@@ -303,6 +319,301 @@ int main(void)
             assert(sCamera.active);
         }
     }
+    TestMoveCamera();
     puts("PASS: BW2-style initial WAIT/READY/PLAY, six bounded tracks, no repeat, neutral restore, busy resume, restart delay, all battle types/doubles, UI/affine/ownership safety");
     return 0;
+}
+
+static void StartTestMove(u16 move, u8 attacker, u8 target, u8 type, const u8 *script)
+{
+    gAnimScriptActive = TRUE;
+    sChoosing = FALSE;
+    BattleCamera_InterruptAnimation();
+    BattleCamera_StartMove(move, attacker, target, type, script);
+    Tick(0); // Consume the queued executed-animation event at the snapshot boundary.
+}
+
+static void FinishTestMove(void)
+{
+    u32 i;
+    BattleCamera_EndMove();
+    gAnimScriptActive = FALSE;
+    for (i = 0; i < 24; i++) Tick(0);
+    assert(!sMoveCamera.active && !sCamera.active && !sOwnsScanlines);
+    assert(sCamera.x == 0 && sCamera.y == 0 && sCamera.zoom == 256);
+}
+
+static void TestMoveCamera(void)
+{
+    u32 i, n;
+    Ready();
+    gBattlersCount = 4;
+    for (i = 0; i < MAX_BATTLERS_COUNT; i++) gBattleMons[i].hp = 100;
+    gAbsentBattlerFlags = 0;
+
+    // Launch events cannot mutate the currently published idle pose/lease.
+    ForceTrack(0);
+    for (i = 0; i < 10; i++) Tick(0);
+    {
+        u32 generation = gScanlineEffectGeneration;
+        s16 oldX = sCamera.x;
+        gAnimScriptActive = TRUE;
+        sChoosing = FALSE;
+        BattleCamera_StartMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+        assert(!sMoveCamera.active && sCamera.x == oldX && gScanlineEffectGeneration == generation);
+        Tick(0);
+        assert(sMoveCamera.active && gScanlineEffectGeneration != generation);
+        FinishTestMove();
+    }
+    // First, second, third and subsequent executed moves, on both sides.
+    for (i = 0; i < 20; i++)
+    {
+        u8 attacker = i & 1;
+        StartTestMove(MOVE_PECK, attacker, attacker ^ 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+        assert(!sMoveCamera.blocked && sMoveCamera.target == (attacker ^ 1));
+        for (n = 0; n < 24; n++) Tick(0);
+        assert(sCamera.active && sMoveCamera.phase == CAMERA_PHASE_ATTACK_PRESENTATION);
+        FinishTestMove();
+    }
+    // A new animation may supersede an unfinished return without a stuck lease.
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    for (i = 0; i < 12; i++) Tick(0);
+    BattleCamera_EndMove();
+    gAnimScriptActive = FALSE;
+    Tick(0);
+    assert(sMoveCamera.phase == CAMERA_PHASE_RETURN);
+    StartTestMove(MOVE_EMBER, 1, 0, TARGET_SELECTED, gBattleAnimMove_Ember);
+    assert(sMoveCamera.attacker == 1 && sMoveCamera.target == 0 && !sMoveCamera.blocked);
+    FinishTestMove();
+    // Self support must not focus the foe, and an explicit ally remains the ally.
+    StartTestMove(MOVE_WITHDRAW, 0, 1, TARGET_USER, gBattleAnimMove_Withdraw);
+    assert(sMoveCamera.target == 0 && sMoveCamera.targetClass == CAMERA_TARGET_SELF);
+    for (i = 0; i < 30; i++) Tick(0);
+    assert(sCamera.targetX == 0);
+    FinishTestMove();
+    StartTestMove(MOVE_HELPING_HAND, 0, 2, TARGET_ALLY, gBattleAnimMove_HelpingHand);
+    assert(sMoveCamera.targetClass == CAMERA_TARGET_ALLY && sMoveCamera.targetMask == 4);
+    for (i = 0; i < 24; i++) Tick(0);
+    FinishTestMove();
+
+    // Redirection uses the resolved ID, never the opposite-slot assumption.
+    StartTestMove(MOVE_EMBER, 0, 3, TARGET_SELECTED, gBattleAnimMove_Ember);
+    assert(sMoveCamera.target == 3 && sMoveCamera.targetMask == 8);
+    // Projectile is registered at the same logical coordinates as its endpoint.
+    gSprites[9] = gSprites[gBattlerSpriteIds[3]];
+    gSprites[9].oam.affineMode = ST_OAM_AFFINE_OFF;
+    gSprites[9].x2 = gSprites[9].y2 = 0;
+    BattleCamera_OnSpriteCreated(9, ANIM_TAG_SMALL_EMBER);
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    for (i = 0; i < 40; i++)
+    {
+        BattleCamera_BeginFrame();
+        assert(gSprites[9].x == gSprites[gBattlerSpriteIds[3]].x);
+        assert(gSprites[9].y == gSprites[gBattlerSpriteIds[3]].y);
+        BattleCamera_EndFrame();
+        assert(memcmp(sOriginal, gSprites, sizeof(sOriginal)) == 0 && sAllocated == 0);
+    }
+    // Above-horizon/elevated endpoints must use the same integer translation.
+    gSprites[gBattlerSpriteIds[3]].y = gSprites[9].y = 18;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    for (i = 0; i < 8; i++)
+    {
+        BattleCamera_BeginFrame();
+        assert(gSprites[9].y == gSprites[gBattlerSpriteIds[3]].y);
+        BattleCamera_EndFrame();
+        assert(memcmp(sOriginal, gSprites, sizeof(sOriginal)) == 0);
+    }
+    gSprites[gBattlerSpriteIds[3]].y = gSprites[9].y = 69;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    FinishTestMove();
+    // Sprite-slot reuse outside animation must not retain effect membership.
+    BattleCamera_OnSpriteCreated(9, 0);
+    assert(!(sMoveCamera.effects[0] & (1u << 9)));
+
+    // Hardware-hidden helper sprites must never become visible affine objects.
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    gSprites[10] = gSprites[0];
+    gSprites[10].oam.affineMode = ST_OAM_AFFINE_ERASE;
+    BattleCamera_OnSpriteCreated(10, 0);
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    for (i = 0; i < 12; i++)
+    {
+        BattleCamera_BeginFrame();
+        assert(gSprites[10].oam.affineMode == ST_OAM_AFFINE_ERASE);
+        BattleCamera_EndFrame();
+        assert(memcmp(sOriginal, gSprites, sizeof(sOriginal)) == 0 && sAllocated == 0);
+    }
+    FinishTestMove();
+    // Melee opens on the user, then actual hitsplat creation requests impact focus.
+    StartTestMove(MOVE_HEADBUTT, 0, 1, TARGET_SELECTED, gBattleAnimMove_Headbutt);
+    assert(sCamera.targetX == 0);
+    for (i = 0; i < 4; i++) Tick(0);
+    BattleCamera_OnSpriteCreated(10, ANIM_TAG_IMPACT);
+    assert(sMoveCamera.phase == CAMERA_PHASE_IMPACT && sCamera.targetX > 0);
+    for (i = 0; i < 8; i++) Tick(0);
+    FinishTestMove();
+
+    // Spread and field are stable group/neutral framing, never first-target focus.
+    StartTestMove(MOVE_GROWL, 0, 1, TARGET_BOTH, gBattleAnimMove_Growl);
+    assert(sMoveCamera.targetClass == CAMERA_TARGET_GROUP && sMoveCamera.targetMask == 10);
+    for (i = 0; i < 30; i++)
+    {
+        Tick(0);
+        assert(!sCamera.active && sCamera.zoom == 256 && !sOwnsScanlines);
+    }
+    FinishTestMove();
+    StartTestMove(MOVE_RAIN_DANCE, 0, MAX_BATTLERS_COUNT, TARGET_FIELD, gBattleAnimMove_RainDance);
+    assert(sMoveCamera.targetClass == CAMERA_TARGET_FIELD && sMoveCamera.targetMask == 0);
+    for (i = 0; i < 24; i++) Tick(0);
+    FinishTestMove();
+    // Missing targets, unreviewed moves or a substituted script retain neutral.
+    StartTestMove(MOVE_EMBER, 0, MAX_BATTLERS_COUNT, TARGET_SELECTED, gBattleAnimMove_Ember);
+    assert(sMoveCamera.blocked);
+    for (i = 0; i < 24; i++) Tick(0);
+    FinishTestMove();
+    StartTestMove(MOVE_POUND, 0, 1, TARGET_SELECTED, NULL);
+    assert(sMoveCamera.blocked);
+    FinishTestMove();
+    StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    assert(sMoveCamera.blocked);
+    FinishTestMove();
+
+    // Disappearance, fainting, rebinding and battle exit invalidate presentation.
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    Tick(0);
+    gSprites[gBattlerSpriteIds[1]].invisible = TRUE;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    Tick(0);
+    assert(!sMoveCamera.active);
+    gSprites[gBattlerSpriteIds[1]].invisible = FALSE;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    Tick(0);
+    gBattleMons[1].hp = 0;
+    Tick(0);
+    assert(!sMoveCamera.active);
+    gBattleMons[1].hp = 100;
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    Tick(0);
+    BattleCamera_OnSpriteCreated(gBattlerSpriteIds[1], 0);
+    Tick(0);
+    assert(!sMoveCamera.active && !sOwnsScanlines);
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    Tick(0);
+    gMain.inBattle = FALSE;
+    Tick(0);
+    assert(!sMoveCamera.active);
+    gMain.inBattle = TRUE;
+    Ready();
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    for (i = 0; i < 24; i++) Tick(0);
+    assert(sCamera.active);
+    FinishTestMove();
+
+    // Interrupted scripts and unsupported BG commands cannot leave a stuck shot.
+    StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+    for (i = 0; i < 12; i++) Tick(0);
+    gAnimScriptActive = FALSE;
+    for (i = 0; i < 24; i++) Tick(0);
+    assert(!sMoveCamera.active);
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    Tick(0);
+    BattleCamera_BlockMove();
+    BattleCamera_EndMove(); // End cannot override an unsupported-command cancellation.
+    Tick(0);
+    assert(!sMoveCamera.active && !sOwnsScanlines);
+    gAnimScriptActive = FALSE;
+
+    // Malformed/extreme animation coordinates fail closed before projection.
+    StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+    gSprites[9].y = 2000;
+    BattleCamera_OnSpriteCreated(9, ANIM_TAG_SMALL_EMBER);
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    Tick(0);
+    assert(!sMoveCamera.active && !sOwnsScanlines);
+    gSprites[9].y = 40;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    gAnimScriptActive = FALSE;
+    // Matrix exhaustion cancels the entire move, not only actor scaling.
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    sAllocated = 0xFFFFFFFE;
+    for (i = 0; i < 12; i++) Tick(0xFFFFFFFE);
+    assert(!sMoveCamera.active && !sOwnsScanlines);
+    sAllocated = 0;
+    gAnimScriptActive = FALSE;
+
+    // A replacement scanline owner with identical parameters is never stopped.
+    StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+    for (i = 0; i < 12; i++) Tick(0);
+    ScanlineEffect_SetParams((struct ScanlineEffectParams){(void *)REG_ADDR_BG3HOFS, SCANLINE_EFFECT_DMACNT_32BIT, 1, 0});
+    Tick(0);
+    assert(!sMoveCamera.active && !sOwnsScanlines && gScanlineEffect.state == 1);
+    ScanlineEffect_Stop();
+    gAnimScriptActive = FALSE;
+    // Local move affine state is composed in temporary slots and never reset.
+    gSprites[0].oam.affineMode = ST_OAM_AFFINE_NORMAL;
+    gSprites[0].oam.matrixNum = 7;
+    SetOamMatrix(7, 0, -256, 256, 0);
+    sAllocated = 1u << 7;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    gAnimScriptActive = TRUE;
+    BattleCamera_StartMove(MOVE_WITHDRAW, 0, 0, TARGET_USER, gBattleAnimMove_Withdraw);
+    for (i = 0; i < 28; i++)
+    {
+        Tick(1u << 7);
+        assert(gOamMatrices[7].b == -256 && gOamMatrices[7].c == 256);
+    }
+    BattleCamera_EndMove();
+    gAnimScriptActive = FALSE;
+    for (i = 0; i < 24; i++) Tick(1u << 7);
+    assert(!sMoveCamera.active && sAllocated == (1u << 7));
+    gSprites[0].oam.affineMode = ST_OAM_AFFINE_OFF;
+    gSprites[0].oam.matrixNum = 0;
+    sAllocated = 0;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    // Logical-update replay is invariant to grouping into 1x or4x frames.
+    {
+        struct BattleCamera reference;
+        u8 referencePhase;
+        u32 frame, tick;
+        StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+        for (frame = 0; frame < 16; frame++) Tick(0);
+        assert(sMoveCamera.phase == CAMERA_PHASE_TARGET_FOCUS);
+        reference = sCamera;
+        referencePhase = sMoveCamera.phase;
+        FinishTestMove();
+        StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+        for (frame = 0; frame < 4; frame++)
+            for (tick = 0; tick < 4; tick++) Tick(0);
+        assert(sCamera.x == reference.x && sCamera.y == reference.y && sCamera.zoom == reference.zoom);
+        assert(sMoveCamera.phase == referencePhase);
+        FinishTestMove();
+    }
+    // Replacement scripts/fainting/substitute transitions retain neutral safely.
+    gBattleSpritesDataPtr->battlerData[1].behindSubstitute = TRUE;
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    assert(sMoveCamera.blocked && !sCamera.active);
+    FinishTestMove();
+    gBattleSpritesDataPtr->battlerData[1].behindSubstitute = FALSE;
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    Tick(0);
+    BattleCamera_InterruptAnimation();
+    Tick(0);
+    assert(!sMoveCamera.active);
+    gAnimScriptActive = FALSE;
+
+    // Zero-update/skipped animation never forces a cinematic or a camera wait.
+    gAnimScriptActive = TRUE;
+    BattleCamera_InterruptAnimation();
+    BattleCamera_StartMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+    BattleCamera_EndMove();
+    gAnimScriptActive = FALSE;
+    Tick(0);
+    assert(!sMoveCamera.active && !sOwnsScanlines);
+    // Watchdog bounds broken animation callbacks without touching their state.
+    StartTestMove(MOVE_EMBER, 0, 1, TARGET_SELECTED, gBattleAnimMove_Ember);
+    for (i = 0; i <= BATTLE_CAMERA_MOVE_MAX_TICKS; i++) Tick(0);
+    assert(!sMoveCamera.active && gAnimScriptActive);
+    gAnimScriptActive = FALSE;
+    puts("PASS: repeated executed moves, both sides, resolved self/ally/spread/field targets, projectile alignment, impacts, invalidation, interruption, timeout, neutral reset");
 }

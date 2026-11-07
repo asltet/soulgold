@@ -18,7 +18,7 @@ creates prerequisites. If only that header is missing, its existing rule is:
 tools/jsonproc/jsonproc src/data/region_map/region_map_sections.json src/data/region_map/region_map_sections.constants.json.txt include/constants/region_map_sections.h
 ```
 
-The ARM check runs CPP -> project text preprocessor -> ARM GCC for the five
+The ARM check runs CPP -> project text preprocessor -> ARM GCC for the eight
 relevant translation units. It permits the existing unused-const warning in
 battle_main.c, matching the project's default unused-warning policy.
 The host harness includes the real camera implementation and project headers;
@@ -90,3 +90,35 @@ neutral endpoints of all six tracks, nonrepeating selection, READY after busy
 ownership, next-track continuation without a new delay, restart after
 interruption, affine/row/resource invariants, and all environment/type/doubles
 cases. Emulator visual and performance acceptance remain separate.
+
+## Executed-move camera extension (2026-11-07)
+
+Moving profiles are source-admitted only for canonical Headbutt, Peck, Ember,
+Splash, Withdraw and Helping Hand scripts. Growl, Tail Whip and Rain Dance use
+stable neutral group/field framing. All other or replaced scripts remain neutral.
+These entries have not yet been observed with the extension in an emulator.
+
+```sh
+python tools/battle_camera_test/audit_move_scripts.py
+```
+
+The compile checker now covers eight relevant C units. The native fixture tests
+queued snapshot-safe lifecycle events,20 repeated actions from both sides,
+resolved self/ally/spread/field/redirection classes, effect registration and
+slot reuse, projectile endpoints, local affine state, hidden helpers, matrix
+exhaustion, interruption/rebinding/faint/exit, watchdog and neutral restoration.
+It compares mid-focus state under1x/4x logical-update grouping; it does not run
+actual accelerated VM/game frames. Full idle/background checks remain in place.
+
+Move tuning/bindings live in `src/data/battle_camera_move_profiles.h`; snapshot
+capacity, watchdog and focus calibration are in `include/battle_camera.h`.
+Script pointer matching is intentional: do not add a move ID without auditing
+its actual animation and C callbacks. The static script checker does not replace
+that C audit or emulator observation. No camera tasks or animation waits are
+added; all move events commit in BeginFrame inside the existing OAM transaction.
+
+In the parent workspace read faux3d-move-camera-implementation.md,
+faux3d-move-camera-testing.md and faux3d-move-camera-compatibility.md. Rebuild a
+ROM in the working tool environment, enable battle animations, and test multiple
+successive executed moves. With battle scenes/headless animations disabled,
+no move camera is forced over an animation the engine skips.

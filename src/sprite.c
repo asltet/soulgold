@@ -1,4 +1,5 @@
 #include "global.h"
+#include "battle_camera.h"
 #include "sprite.h"
 #include "main.h"
 #include "palette.h"
@@ -625,6 +626,7 @@ u32 CreateSpriteAt(u32 index, const struct SpriteTemplate *template, s16 x, s16 
         sprite->oam.paletteNum = IndexOfSpritePaletteTag(template->paletteTag);
 
     RecordSpriteCreation(index, template, creator);
+    BattleCamera_OnSpriteCreated(index, template->tileTag);
     return index;
 }
 

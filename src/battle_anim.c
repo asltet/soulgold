@@ -1,6 +1,7 @@
 #include "global.h"
 #include "battle.h"
 #include "battle_anim.h"
+#include "battle_camera.h"
 #include "battle_anim_scripts.h"
 #include "battle_controllers.h"
 #include "battle_environment.h"
@@ -280,6 +281,8 @@ void ClearBattleAnimationVars(void)
 {
     s32 i;
 
+    BattleCamera_InterruptAnimation();
+
     sAnimFramesToWait = 0;
     gAnimScriptActive = FALSE;
     gAnimVisualTaskCount = 0;
@@ -330,6 +333,8 @@ static void Nop(void)
 void LaunchBattleAnimation(u32 animType, u32 animId)
 {
     s32 i;
+
+    BattleCamera_InterruptAnimation();
 
     if (gTestRunnerEnabled)
     {
@@ -468,6 +473,9 @@ void LaunchBattleAnimation(u32 animType, u32 animId)
     gBattle_WIN0V = 0;
     gBattle_WIN1H = 0;
     gBattle_WIN1V = 0;
+    if (animType == ANIM_TYPE_MOVE && !IsContest())
+        BattleCamera_StartMove(animId, gBattlerAttacker, gBattlerTarget,
+                              GetBattlerMoveTargetType(gBattlerAttacker, animId), sBattleAnimScriptPtr);
 }
 
 void DestroyAnimSprite(struct Sprite *sprite)
@@ -925,6 +933,7 @@ static void Cmd_end(void)
             UpdateOamPriorityInAllHealthboxes(1, sAnimHideHpBoxes);
             sAnimHideHpBoxes = FALSE;
         }
+        BattleCamera_EndMove();
         gAnimScriptActive = FALSE;
     }
 }
@@ -997,6 +1006,7 @@ static void Cmd_monbg(void)
     enum BattlerId battler;
     enum AnimBattler animBattler;
 
+    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
 
     animBattler = sBattleAnimScriptPtr[0];
@@ -1337,6 +1347,7 @@ static void Cmd_monbg_static(void)
     enum BattlerId battler;
     enum AnimBattler animBattlerId;
 
+    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
 
     animBattlerId = sBattleAnimScriptPtr[0];
@@ -1535,6 +1546,7 @@ static void Cmd_fadetobg(void)
     u8 backgroundId;
     u8 taskId;
 
+    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
     backgroundId = sBattleAnimScriptPtr[0];
     sBattleAnimScriptPtr++;
@@ -1548,6 +1560,7 @@ static void Cmd_fadetobgfromset(void)
     u8 bg1, bg2, bg3;
     u8 taskId;
 
+    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
     bg1 = sBattleAnimScriptPtr[0];
     bg2 = sBattleAnimScriptPtr[1];
@@ -1635,6 +1648,7 @@ static void Cmd_restorebg(void)
 {
     u8 taskId;
 
+    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
     taskId = CreateTask(Task_FadeToBg, 5);
     gTasks[taskId].tBackgroundId = -1;
@@ -1672,6 +1686,7 @@ static void Cmd_waitbgfadein(void)
 
 static void Cmd_changebg(void)
 {
+    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
     LoadMoveBg(sBattleAnimScriptPtr[0]);
     sBattleAnimScriptPtr++;
