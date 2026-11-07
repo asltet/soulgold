@@ -27,11 +27,11 @@ struct CameraSpriteBackup
 };
 
 static EWRAM_DATA struct BattleCamera sCamera = {0};
-static EWRAM_DATA struct CameraSpriteBackup sBackups[6] = {0};
+static EWRAM_DATA struct CameraSpriteBackup sBackups[MAX_BATTLERS_COUNT * 3] = {0};
 static EWRAM_DATA u8 sBackupCount = 0;
 static EWRAM_DATA bool8 sDemoPlayed = FALSE;
 static EWRAM_DATA u16 sIdleFrames = 0;
-static EWRAM_DATA bool8 sPlainReady = FALSE;
+static EWRAM_DATA bool8 sSceneReady = FALSE;
 static EWRAM_DATA bool8 sOwnsScanlines = FALSE;
 static EWRAM_DATA u32 sScanlineGeneration = 0;
 // Include the transfer after the final visible row. Main-loop scratch only;
@@ -62,14 +62,14 @@ void BattleCamera_Reset(void)
 {
     BattleCamera_Cancel();
     sDemoPlayed = FALSE;
-    sPlainReady = FALSE;
+    sSceneReady = FALSE;
 }
 
 void BattleCamera_SetEnvironment(u16 environment)
 {
     BattleCamera_Cancel();
     // Called by the actual loader after environment overrides are resolved.
-    sPlainReady = environment == BATTLE_ENVIRONMENT_PLAIN;
+    sSceneReady = environment < BATTLE_ENVIRONMENT_COUNT;
 }
 
 static s16 Ease(s16 destination, u16 frame)
@@ -197,11 +197,10 @@ void BattleCamera_BeginFrame(void)
     const u16 returnStart = BATTLE_CAMERA_MOVE_TICKS + BATTLE_CAMERA_HOLD_TICKS;
     const u16 end = 2 * BATTLE_CAMERA_MOVE_TICKS + BATTLE_CAMERA_HOLD_TICKS;
 
-    if (!BATTLE_CAMERA_DEMO || !sPlainReady || !gMain.inBattle || !gBattleSpritesDataPtr
-        || gBattlersCount != 2 || !InBattleChoosingMoves() || gPaletteFade.active
+    if (!BATTLE_CAMERA_DEMO || !sSceneReady || !gMain.inBattle || !gBattleSpritesDataPtr
+        || (gBattlersCount < 2 || gBattlersCount > MAX_BATTLERS_COUNT) || !InBattleChoosingMoves() || gPaletteFade.active
         || gAnimScriptActive || gBattle_BG3_X || gBattle_BG3_Y
-        || gSpriteCoordOffsetX || gSpriteCoordOffsetY
-        || (gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_RECORDED | BATTLE_TYPE_FRONTIER)))
+        || gSpriteCoordOffsetX || gSpriteCoordOffsetY)
     {
         BattleCamera_Cancel();
         return;
@@ -214,7 +213,6 @@ void BattleCamera_BeginFrame(void)
     if (!sCamera.active && !sDemoPlayed && ++sIdleFrames >= BATTLE_CAMERA_WAIT_TICKS)
     {
         BattleCamera_Cancel();
-        sDemoPlayed = TRUE;
         sCamera.targetX = BATTLE_CAMERA_MAX_PAN_X * 256;
         sCamera.targetY = -BATTLE_CAMERA_MAX_PAN_Y * 256;
         sCamera.targetZoom = BATTLE_CAMERA_MAX_ZOOM;
@@ -224,6 +222,7 @@ void BattleCamera_BeginFrame(void)
             return;
         }
         sCamera.active = TRUE;
+        sDemoPlayed = TRUE;
     }
     if (!sCamera.active)
         return;

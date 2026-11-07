@@ -151,14 +151,16 @@ int main(void)
         assert(sAllocated == 0 && sBackupCount == 0);
     }
     assert(!sCamera.active && sCamera.zoom == 256 && !sOwnsScanlines);
-    // Not-yet-adapted scenery gets a neutral fallback, not unsupported scroll.
+    // Wild-grass scenes must now receive the same demonstration.
     Ready();
     BattleCamera_SetEnvironment(BATTLE_ENVIRONMENT_GRASS);
-    for (i = 0; i < 160; i++)
+    for (i = 0; i < 78; i++)
     {
         BattleCamera_BeginFrame();
+        if (i == 77)
+            assert(sCamera.active && sCamera.zoom == BATTLE_CAMERA_MAX_ZOOM);
         BattleCamera_EndFrame();
-        assert(!sCamera.active && sAllocated == 0 && gScanlineEffect.state == 0);
+        assert(sAllocated == 0);
     }
     // Roll back all actors and floor if only one affine matrix is available.
     Ready();
@@ -221,6 +223,14 @@ int main(void)
         assert(!sCamera.active && gScanlineEffect.state == 1);
         assert(gScanlineEffect.dmaDest == (void *)REG_ADDR_BG1HOFS);
     }
+    // An intro effect releasing DMA must allow a retry in the same battle.
+    gScanlineEffect.state = 0;
+    for (i = 0; i < 58; i++)
+    {
+        BattleCamera_BeginFrame();
+        BattleCamera_EndFrame();
+    }
+    assert(sCamera.active);
     // Ownership taken after admission is also preserved on cancellation.
     Ready();
     for (i = 0; i < 60; i++)
@@ -273,6 +283,52 @@ int main(void)
         assert(!sCamera.active);
     }
     gBattle_BG3_X = 0;
-    puts("PASS: stronger track, row coverage, contact mapping, restoration, matrix rollback, affine/flips, UI, neutral fallback, DMA ownership, interrupted publication");
+    // Every loaded environment and wild/trainer/special battle flag combination
+    // must be admitted, including doubles with eight distinct scene sprites.
+    {
+        u32 env, type, count, n;
+        const u32 types[] = {0, BATTLE_TYPE_TRAINER, BATTLE_TYPE_LINK,
+                            BATTLE_TYPE_FRONTIER, BATTLE_TYPE_RECORDED};
+        for (n = 0; n < 9; n++)
+        {
+            gSprites[n].oam.affineMode = ST_OAM_AFFINE_OFF;
+            gSprites[n].oam.matrixNum = 0;
+            if (n >= 5)
+            {
+                gSprites[n].inUse = TRUE;
+                gSprites[n].oam.size = 3;
+                gSprites[n].x = 120;
+                gSprites[n].y = 80;
+                gSprites[n].centerToCornerVecX = -32;
+                gSprites[n].centerToCornerVecY = -32;
+            }
+        }
+        gBattlerSpriteIds[2] = 5;
+        gBattlerSpriteIds[3] = 6;
+        gBattlerPositions[2] = 2;
+        gBattlerPositions[3] = 3;
+        boxes[3].shadowSpriteIdPrimary = 7;
+        boxes[3].shadowSpriteIdSecondary = 8;
+        memcpy(original, gSprites, sizeof(original));
+        for (env = 0; env < BATTLE_ENVIRONMENT_COUNT; env++)
+        for (type = 0; type < ARRAY_COUNT(types); type++)
+        for (count = 2; count <= 4; count += 2)
+        {
+            Ready();
+            gBattlersCount = count;
+            gBattleTypeFlags = types[type];
+            BattleCamera_SetEnvironment(env);
+            for (n = 0; n < 78; n++)
+            {
+                BattleCamera_BeginFrame();
+                if (n == 77)
+                    assert(sCamera.active && sCamera.zoom == BATTLE_CAMERA_MAX_ZOOM);
+                BattleCamera_EndFrame();
+                assert(memcmp(original, gSprites, sizeof(original)) == 0);
+                assert(sAllocated == 0);
+            }
+        }
+    }
+    puts("PASS: stronger track, row coverage, contact mapping, restoration, matrix rollback, affine/flips, UI, all environments and battle types, doubles, DMA ownership, interrupted publication");
     return 0;
 }

@@ -14,7 +14,7 @@
 #define BATTLE_CAMERA_HOLD_TICKS 24
 #define BATTLE_CAMERA_WAIT_TICKS 30
 
-// Plain artwork profile: unwrapped X 0..255, Y -16..175.
+// Prepared battle-background artwork profile: unwrapped X 0..255, Y -16..175.
 #define BATTLE_CAMERA_HORIZON 32
 #define BATTLE_CAMERA_NEAR_CONTACT 120
 #define BATTLE_CAMERA_SOURCE_MIN_Y (-16)

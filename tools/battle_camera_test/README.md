@@ -47,3 +47,21 @@ matrix exhaustion, exclusive scanline admission, different/same-parameter
 ownership replacement, and interrupted VBlank publication. DMA registers,
 actual scanline timing, rendering seams and clipping still need emulator tests.
 Runtime camera tuning lives only in `include/battle_camera.h`.
+
+## Wild/trainer coverage correction
+
+The Plain-only gate has been removed. All loaded environments and battle flags,
+including wild encounters and doubles, are admitted under the existing menu/
+resource safeguards. Check all active persistent maps with:
+
+```sh
+python tools/battle_camera_test/prepare_background_maps.py --check
+```
+
+Without `--check`, the tool regenerates edge guards in the actual INCBIN map
+paths (including special environments using `tiles.bin`). It preserves original
+upper112 pixels, tile IDs, palette banks and map size. Plain keeps its existing
+specialized turf extension; other environments reflect their own ground edge.
+The native fixture now covers every environment ID, wild/trainer/link/Frontier/
+recorded flags, two/four battlers, and retry after an initially busy scanline
+owner releases its resource. Visual platform/seam checks remain necessary.
