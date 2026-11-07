@@ -58,6 +58,14 @@ static EWRAM_DATA u8 sLastTrack = 0;
 static EWRAM_DATA u32 sVisualRandom = 0;
 static EWRAM_DATA bool8 sSceneReady = FALSE;
 static EWRAM_DATA u16 sSceneDepthStrength = 0;
+static EWRAM_DATA s16 sShakeX = 0, sShakeY = 0;
+struct CameraRowKey
+{
+    s16 x, y, zoom;
+    u16 blend, depth;
+};
+static EWRAM_DATA struct CameraRowKey sRowKey = {0};
+static EWRAM_DATA bool8 sRowsValid = FALSE;
 static EWRAM_DATA bool8 sOwnsScanlines = FALSE;
 static EWRAM_DATA u32 sScanlineGeneration = 0;
 // Include the transfer after the final visible row. Main-loop scratch only;
@@ -89,6 +97,7 @@ struct MoveCameraProfile
     u8 start, travel, impact, restore;
     u16 pan, zoom;
     u8 easing;
+    u8 shakeX, shakeY, shakeTicks;
 };
 struct MoveCameraOverride
 {
@@ -98,7 +107,10 @@ struct MoveCameraOverride
 };
 struct MoveCameraState
 {
-    bool8 active, blocked;
+    bool8 active, blocked, impactSeen;
+    u8 shakeTick, easing;
+    u8 halfWidth[MAX_BATTLERS_COUNT], halfHeight[MAX_BATTLERS_COUNT];
+    bool8 affineBounds;
     u8 attacker, target, targetMask, actorMask;
     u8 profile, targetClass, phase, battlerCount;
     u8 actorSprite[MAX_BATTLERS_COUNT];
@@ -145,6 +157,8 @@ void BattleCamera_Cancel(void)
     if (HasScanlineLease())
         ScanlineEffect_Stop();
     sOwnsScanlines = FALSE;
+    sRowsValid = FALSE;
+    sShakeX = sShakeY = 0;
     sMoveRequest.event = CAMERA_EVENT_NONE;
     memset(&sMoveCamera, 0, sizeof(sMoveCamera));
     memset(&sCamera, 0, sizeof(sCamera));
@@ -176,13 +190,40 @@ void BattleCamera_SetEnvironment(u16 environment)
     sSceneDepthStrength = environment == BATTLE_ENVIRONMENT_PLAIN ? 256 : BATTLE_CAMERA_OTHER_ENV_DEPTH;
 }
 
+// Monotonic Q12 quintic samples; linear interpolation avoids cancellation jitter.
+static const u16 sSmootherWeights[] = {
+    0, 1, 9, 29, 66, 122, 200, 300, 424, 570, 737, 924, 1127, 1345, 1573, 1809, 2048, 2287, 2523, 2751, 2969, 3172, 3359, 3526, 3672, 3796, 3896, 3974, 4030, 4067, 4087, 4095, 4096
+};
+
+static s32 EasingWeight(u16 frame, u16 duration, u8 easing)
+{
+    s32 t = min(frame, duration) * 256 / max(1, duration);
+    s32 t2 = t * t / 256;
+    s32 weight;
+    switch (easing)
+    {
+    case BATTLE_CAMERA_EASING_IN_CUBIC:
+        return t2 * t / 256;
+    case BATTLE_CAMERA_EASING_OUT_CUBIC:
+        t = 256 - t;
+        return 256 - t * t / 256 * t / 256;
+    case BATTLE_CAMERA_EASING_SMOOTHSTEP:
+        return t * t * (768 - 2 * t) / 65536;
+    case BATTLE_CAMERA_EASING_SMOOTHERSTEP:
+        t = min(frame, duration) * 4096 / max(1, duration);
+        if (t == 4096)
+            return 256;
+        weight = sSmootherWeights[t / 128];
+        weight += (sSmootherWeights[t / 128 + 1] - weight) * (t % 128) / 128;
+        return weight / 16;
+    default:
+        return t;
+    }
+}
+
 static s16 Ease(s16 destination, u16 frame, u16 duration)
 {
-    s32 t = frame * 256 / duration;
-    s32 weight = t;
-    if (BATTLE_CAMERA_EASING == BATTLE_CAMERA_EASING_SMOOTHSTEP)
-        weight = t * t * (768 - 2 * t) / 65536;
-    return destination * weight / 256;
+    return destination * EasingWeight(frame, duration, BATTLE_CAMERA_EASING) / 256;
 }
 
 // Private cosmetic PRNG: never consume battle/encounter RNG for camera shots.
@@ -264,9 +305,19 @@ static s32 MoveBlend(s32 idle, s32 move)
     return sMoveCamera.active ? idle + (move - idle) * sMoveBlend / 256 : idle;
 }
 
+static s32 RenderX(void)
+{
+    return max(0, min(BATTLE_CAMERA_MAX_PAN_X * 256, sCamera.x + sShakeX));
+}
+
+static s32 RenderY(void)
+{
+    return max(-BATTLE_CAMERA_MAX_PAN_Y * 256, min(0, sCamera.y + sShakeY));
+}
+
 static s32 PanAt(s32 sourceY)
 {
-    return sCamera.x * MoveBlend(DepthWeight(sourceY), 256) / 65536;
+    return RenderX() * MoveBlend(DepthWeight(sourceY), 256) / 65536;
 }
 
 static s32 SceneScale(s32 sourceY, s32 response)
@@ -285,7 +336,7 @@ static s32 FloorSlope(s32 weight)
 
 static s32 HorizonQ8(void)
 {
-    s32 translation = -sCamera.y * sCamera.zoom / 256;
+    s32 translation = -RenderY() * sCamera.zoom / 256;
     return BATTLE_CAMERA_HORIZON * 256 + MoveBlend(translation * DepthWeight(BATTLE_CAMERA_HORIZON) / 256, translation);
 }
 
@@ -305,13 +356,20 @@ static s32 GroundY(s32 sourceY)
 static bool32 BuildRows(void)
 {
     u32 row;
-    s32 horizon = HorizonQ8();
-    s32 middle = horizon + (BATTLE_CAMERA_MIDGROUND_Y - BATTLE_CAMERA_HORIZON) * FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM);
+    struct CameraRowKey key = {RenderX(), RenderY(), sCamera.zoom,
+                              sMoveCamera.active ? sMoveBlend : 0, sSceneDepthStrength};
+    s32 horizon, middle, inverseFar, inverseMiddle, inverseNear;
+    if (sRowsValid && key.x == sRowKey.x && key.y == sRowKey.y && key.zoom == sRowKey.zoom
+        && key.blend == sRowKey.blend && key.depth == sRowKey.depth)
+        return TRUE;
+    sRowsValid = FALSE;
+    horizon = HorizonQ8();
+    middle = horizon + (BATTLE_CAMERA_MIDGROUND_Y - BATTLE_CAMERA_HORIZON) * FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM);
     // Three reciprocals per table, no per-row perspective division. Q16
     // reciprocal products are preshifted to stay within signed 32-bit range.
-    s32 inverseFar = 16777216 / FloorSlope(BATTLE_CAMERA_BACKGROUND_ZOOM);
-    s32 inverseMiddle = 16777216 / FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM);
-    s32 inverseNear = 16777216 / FloorSlope(256);
+    inverseFar = 16777216 / FloorSlope(BATTLE_CAMERA_BACKGROUND_ZOOM);
+    inverseMiddle = 16777216 / FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM);
+    inverseNear = 16777216 / FloorSlope(256);
     for (row = 0; row <= DISPLAY_HEIGHT; row++)
     {
         s32 screen = row * 256;
@@ -326,6 +384,8 @@ static bool32 BuildRows(void)
             return FALSE;
         sRows[row] = (sourceX & 0x1FF) | ((u32)((sourceY - row) & 0x1FF) << 16);
     }
+    sRowKey = key;
+    sRowsValid = TRUE;
     return TRUE;
 }
 
@@ -459,9 +519,12 @@ void BattleCamera_BeginFrame(void)
             sCamera.startZoom = sCamera.zoom;
         }
         sMenuReturnTick++;
-        sCamera.x = sCamera.startX + Ease(-sCamera.startX, sMenuReturnTick, BATTLE_CAMERA_HANDOFF_TICKS);
-        sCamera.y = sCamera.startY + Ease(-sCamera.startY, sMenuReturnTick, BATTLE_CAMERA_HANDOFF_TICKS);
-        sCamera.zoom = sCamera.startZoom + Ease(256 - sCamera.startZoom, sMenuReturnTick, BATTLE_CAMERA_HANDOFF_TICKS);
+        {
+            s32 weight = EasingWeight(sMenuReturnTick, BATTLE_CAMERA_HANDOFF_TICKS, BATTLE_CAMERA_RETURN_EASING);
+            sCamera.x = sCamera.startX - sCamera.startX * weight / 256;
+            sCamera.y = sCamera.startY - sCamera.startY * weight / 256;
+            sCamera.zoom = sCamera.startZoom + (256 - sCamera.startZoom) * weight / 256;
+        }
         if (sMenuReturnTick == BATTLE_CAMERA_HANDOFF_TICKS)
         {
             BattleCamera_Cancel();
@@ -624,6 +687,18 @@ static void ResolveMoveTargets(u8 type)
                            : CAMERA_TARGET_OPPONENT;
 }
 
+static bool32 HasUncertainBounds(const struct Sprite *sprite)
+{
+    const struct OamMatrix *matrix;
+    if (!(sprite->oam.affineMode & ST_OAM_AFFINE_ON_MASK))
+        return FALSE;
+    matrix = &gOamMatrices[sprite->oam.matrixNum];
+    // Ordinary battlers start affine with an identity (possibly flipped) matrix.
+    return matrix->b != 0 || matrix->c != 0
+        || (matrix->a != 256 && matrix->a != -256)
+        || (matrix->d != 256 && matrix->d != -256);
+}
+
 static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const u8 *script)
 {
     u32 i;
@@ -669,6 +744,15 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
         if (VisibleMoveBattler(i))
         {
             sMoveCamera.actorMask |= 1u << i;
+            if (gSprites[id].oam.shape >= 3)
+                sMoveCamera.blocked = TRUE;
+            else
+            {
+                sMoveCamera.halfWidth[i] = gOamDimensions[gSprites[id].oam.shape][gSprites[id].oam.size].width / 2;
+                sMoveCamera.halfHeight[i] = gOamDimensions[gSprites[id].oam.shape][gSprites[id].oam.size].height / 2;
+                if (HasUncertainBounds(&gSprites[id]))
+                    sMoveCamera.affineBounds = TRUE;
+            }
             if (gBattleSpritesDataPtr->battlerData[i].behindSubstitute)
                 sMoveCamera.blocked = TRUE;
         }
@@ -691,6 +775,54 @@ static void StartMoveNow(u16 move, u8 attacker, u8 target, u8 targetType, const 
                 sMoveProfiles[sMoveCamera.profile].zoom);
 }
 
+static void ClampMoveFraming(void)
+{
+    u32 i;
+    s32 zoom;
+    s32 margin = BATTLE_CAMERA_FRAMING_MARGIN;
+    // Rotated/scaled image extents are unknown: do not add camera zoom.
+    if (sMoveCamera.affineBounds)
+        sCamera.targetZoom = 256;
+    for (i = 0; i < gBattlersCount; i++)
+        if (sMoveCamera.actorMask & (1u << i))
+        {
+            const struct Sprite *sprite = &gSprites[sMoveCamera.actorSprite[i]];
+            s32 room;
+            if (sprite->x + sprite->x2 < -512 || sprite->x + sprite->x2 > 1024
+                || sprite->y + sprite->y2 < -512 || sprite->y + sprite->y2 > 1024)
+            {
+                sCamera.targetZoom = 256;
+                sCamera.targetX = 0;
+                return; // Main projection will reject the malformed coordinates.
+            }
+            if (HasUncertainBounds(sprite))
+                sCamera.targetZoom = 256;
+            room = max(0, sprite->x + sprite->x2 - sMoveCamera.halfWidth[i] - margin);
+            sCamera.targetX = min(sCamera.targetX, room * 256);
+        }
+    // At most33 candidates *4 actors, only when a goal changes, not per frame.
+    for (zoom = sCamera.targetZoom; zoom > 256; zoom--)
+    {
+        bool32 fits = TRUE;
+        for (i = 0; i < gBattlersCount; i++)
+            if (sMoveCamera.actorMask & (1u << i))
+            {
+                const struct Sprite *sprite = &gSprites[sMoveCamera.actorSprite[i]];
+                s32 x = sprite->x + sprite->x2 - sCamera.targetX / 256;
+                s32 y = BATTLE_CAMERA_HORIZON
+                      + ((sprite->y + sprite->y2 - BATTLE_CAMERA_HORIZON) * 256 - sCamera.targetY) * zoom / 65536;
+                s32 halfWidth = (sMoveCamera.halfWidth[i] * zoom + 255) / 256;
+                s32 halfHeight = (sMoveCamera.halfHeight[i] * zoom + 255) / 256;
+                if (x - halfWidth < margin || x + halfWidth >= DISPLAY_WIDTH - margin
+                    || y - halfHeight < margin || y + halfHeight >= DISPLAY_HEIGHT - margin)
+                    fits = FALSE;
+            }
+        if (fits)
+            break;
+    }
+    sCamera.targetZoom = zoom;
+}
+
 static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
 {
     const struct MoveCameraProfile *profile = &sMoveProfiles[sMoveCamera.profile];
@@ -709,7 +841,10 @@ static void SetMoveGoal(u8 focus, u16 duration, u16 zoom)
                             (BATTLE_CAMERA_NEAR_CONTACT - y) * BATTLE_CAMERA_MAX_PAN_Y * 256
                             / (BATTLE_CAMERA_NEAR_CONTACT - BATTLE_CAMERA_HORIZON)));
         sCamera.targetZoom = 256 + min(zoom, BATTLE_CAMERA_MAX_ZOOM - 256);
+        ClampMoveFraming();
     }
+    sMoveCamera.easing = sMoveCamera.phase == CAMERA_PHASE_RETURN ? BATTLE_CAMERA_RETURN_EASING
+                       : sHandoffTick < BATTLE_CAMERA_HANDOFF_TICKS ? BATTLE_CAMERA_EASING_SMOOTHSTEP : profile->easing;
     sMoveCamera.elapsed = 0;
     sMoveCamera.duration = max(max(1, duration), BATTLE_CAMERA_HANDOFF_TICKS - sHandoffTick);
 }
@@ -777,11 +912,29 @@ void BattleCamera_OnSpriteCreated(u8 id, u16 tileTag)
     if (sMoveCamera.blocked || !gAnimScriptActive)
         return;
     sMoveCamera.effects[id / 32] |= 1u << (id % 32);
-    if (tileTag == ANIM_TAG_IMPACT && sMoveCamera.profile <= MOVE_CAMERA_SPECIAL)
+    if (tileTag == ANIM_TAG_IMPACT && sMoveCamera.profile <= MOVE_CAMERA_SPECIAL && !sMoveCamera.impactSeen
+        && sMoveCamera.phase != CAMERA_PHASE_RETURN)
     {
+        sMoveCamera.impactSeen = TRUE;
+        sMoveCamera.shakeTick = 0;
         sMoveCamera.phase = CAMERA_PHASE_IMPACT;
         SetMoveGoal(sMoveCamera.target, sMoveProfiles[sMoveCamera.profile].impact,
                     sMoveProfiles[sMoveCamera.profile].zoom);
+    }
+}
+
+static void UpdateImpactShake(void)
+{
+    const struct MoveCameraProfile *profile = &sMoveProfiles[sMoveCamera.profile];
+    u16 ticks = min(profile->shakeTicks, BATTLE_CAMERA_MAX_SHAKE_TICKS);
+    sShakeX = sShakeY = 0;
+    if (sMoveCamera.impactSeen && sMoveCamera.shakeTick < ticks)
+    {
+        s32 decay = (ticks - sMoveCamera.shakeTick) * 256 / ticks;
+        s32 sign = (sMoveCamera.shakeTick / 2) & 1 ? -1 : 1;
+        sShakeX = sign * min(profile->shakeX, BATTLE_CAMERA_MAX_SHAKE_X) * decay;
+        sShakeY = -sign * min(profile->shakeY, BATTLE_CAMERA_MAX_SHAKE_Y) * decay;
+        sMoveCamera.shakeTick++;
     }
 }
 
@@ -830,13 +983,13 @@ static bool32 UpdateMoveCamera(void)
     }
     if (sMoveCamera.elapsed < sMoveCamera.duration)
     {
-        u16 t = ++sMoveCamera.elapsed * 256 / sMoveCamera.duration;
-        s32 weight = profile->easing == BATTLE_CAMERA_EASING_SMOOTHSTEP
-                   ? t * t * (768 - 2 * t) / 65536 : t;
+        s32 weight = EasingWeight(++sMoveCamera.elapsed, sMoveCamera.duration,
+                                sMoveCamera.easing);
         sCamera.x = sCamera.startX + (sCamera.targetX - sCamera.startX) * weight / 256;
         sCamera.y = sCamera.startY + (sCamera.targetY - sCamera.startY) * weight / 256;
         sCamera.zoom = sCamera.startZoom + (sCamera.targetZoom - sCamera.startZoom) * weight / 256;
     }
+    UpdateImpactShake();
     if (sMoveCamera.elapsed == sMoveCamera.duration)
     {
         switch (sMoveCamera.phase)

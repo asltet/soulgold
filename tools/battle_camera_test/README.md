@@ -154,3 +154,18 @@ The native fixture is not an emulator or a cycle benchmark.
 
 Parent-workspace reports/faux3d-depth-implementation.md links the six Prompt9
 reports, source map, full-build blocker and detailed pending emulator matrix.
+
+## Prompt10 cinematic polish (2026-11-07)
+
+Native tests now check monotonic easing (including lookup-assisted smootherstep),
+row-cache reuse/invalidation, OAM rectangle-aware zoom, identity/flip versus
+nonidentity affine bounds, first-impact deduplication, impulse decay and cleanup.
+The same tests run in both depth presets. Real battle sprites are normally
+affine; identity/flip matrices remain eligible for zoom. Unknown rotated/scaled
+bounds suppress extra zoom rather than overwriting local affine state.
+
+Profile shake is2/1px over8 updates for Headbutt,1/0px over6 for Peck, zero for
+other admitted profiles. Normal/menu returns use smootherstep; inherited idle
+legs retain smoothstep before profile-specific easing. No VM waits were added.
+Rendering cache keys include effective shake X/Y, zoom, blend and environment.
+See parent reports/faux3d-regression-tests.md for the full pending emulator matrix.

@@ -1,13 +1,13 @@
 // First audited scripts only. Unknown/replaced scripts retain neutral framing.
 // Durations are authored logical ticks, not claimed BW2 move timings.
 static const struct MoveCameraProfile sMoveProfiles[] = {
-    // start, travel, impact, return, pan(Q8), zoom delta(Q8), easing
-    {6, 10, 4, 8, 256, 8, BATTLE_CAMERA_EASING_SMOOTHSTEP}, // melee user -> target
-    {8, 8, 4, 8, 256, 8, BATTLE_CAMERA_EASING_SMOOTHSTEP}, // defender emphasis
-    {8, 24, 6, 10, 192, 0, BATTLE_CAMERA_EASING_SMOOTHSTEP}, // ranged endpoints
-    {10, 16, 4, 12, 160, 12, BATTLE_CAMERA_EASING_SMOOTHSTEP}, // self
-    {8, 12, 4, 10, 192, 0, BATTLE_CAMERA_EASING_SMOOTHSTEP}, // ally
-    {1, 1, 1, 1, 0, 0, BATTLE_CAMERA_EASING_SMOOTHSTEP}, // stable spread/field
+    // start, travel, impact, return, pan(Q8), zoom delta(Q8), easing, shake X/Y pixels/ticks
+    {6, 10, 4, 10, 256, 8, BATTLE_CAMERA_EASING_SMOOTHSTEP, 2, 1, 8}, // melee user -> target
+    {8, 8, 4, 10, 256, 8, BATTLE_CAMERA_EASING_SMOOTHSTEP, 1, 0, 6}, // defender emphasis
+    {8, 24, 6, 10, 192, 0, BATTLE_CAMERA_EASING_OUT_CUBIC, 0, 0, 0}, // ranged endpoints
+    {10, 16, 4, 12, 160, 12, BATTLE_CAMERA_EASING_SMOOTHERSTEP, 0, 0, 0}, // self
+    {8, 12, 4, 10, 192, 0, BATTLE_CAMERA_EASING_SMOOTHSTEP, 0, 0, 0}, // ally
+    {1, 1, 1, 1, 0, 0, BATTLE_CAMERA_EASING_SMOOTHSTEP, 0, 0, 0}, // stable spread/field
 };
 static const struct MoveCameraOverride sMoveOverrides[] = {
     {MOVE_HEADBUTT, MOVE_CAMERA_MELEE, gBattleAnimMove_Headbutt},

@@ -8,6 +8,11 @@
 #define ARM_FUNC
 #include "../../src/battle_camera.c"
 
+const struct OamDimensions gOamDimensions[3][4] = {
+    {{8,8},{16,16},{32,32},{64,64}},
+    {{16,8},{32,8},{32,16},{64,32}},
+    {{8,16},{8,32},{16,32},{32,64}},
+};
 struct Main gMain;
 struct Sprite gSprites[MAX_SPRITES + 1];
 struct OamMatrix gOamMatrices[OAM_MATRIX_COUNT];
@@ -76,9 +81,9 @@ void FreeOamMatrix(u8 i)
 }
 void CalcCenterToCornerVec(struct Sprite *s, u8 shape, u8 size, u8 mode)
 {
-    // Fixtures use square 64px sprites only.
-    assert(shape == 0 && size == 3);
-    s->centerToCornerVecX = s->centerToCornerVecY = mode == ST_OAM_AFFINE_DOUBLE ? -64 : -32;
+    assert(shape < 3 && size < 4);
+    s->centerToCornerVecX = -gOamDimensions[shape][size].width / (mode == ST_OAM_AFFINE_DOUBLE ? 1 : 2);
+    s->centerToCornerVecY = -gOamDimensions[shape][size].height / (mode == ST_OAM_AFFINE_DOUBLE ? 1 : 2);
 }
 
 static void Ready(void)
@@ -208,6 +213,61 @@ static void TestDepthProjection(void)
     puts("PASS: depth contacts, scale planes, monotonic floor/inverse, full envelope/blend sweep, neutral identity, environment fallback");
 }
 
+static void TestCinematicMath(void)
+{
+    u32 curve, frame;
+    s32 previous;
+    for (curve = 0; curve <= BATTLE_CAMERA_EASING_SMOOTHERSTEP; curve++)
+    {
+        previous = 0;
+        assert(EasingWeight(0, 1000, curve) == 0);
+        assert(EasingWeight(1000, 1000, curve) == 256);
+        assert(EasingWeight(2000, 1000, curve) == 256);
+        for (frame = 0; frame <= 1000; frame++)
+        {
+            s32 weight = EasingWeight(frame, 1000, curve);
+            assert(weight >= previous && weight <= 256);
+            previous = weight;
+        }
+    }
+    Ready();
+    sCamera.zoom = 284;
+    assert(BuildRows() && sRowsValid);
+    {
+        u32 original = sRows[100];
+        // Sentinel confirms an exact cache hit without a second generation pass.
+        sRows[100] = 0x1234;
+        assert(BuildRows() && sRows[100] == 0x1234);
+        sRows[100] = original;
+        sShakeX = 256;
+        assert(BuildRows() && sRowKey.x == 256);
+        sShakeX = 0;
+        sMoveCamera.active = TRUE;
+        sMoveBlend = 128;
+        assert(BuildRows() && sRowKey.blend == 128);
+        sSceneDepthStrength = 128;
+        assert(BuildRows() && sRowKey.depth == 128);
+        sCamera.x = -10000;
+        // RenderX clamps the shake/source envelope before sampling.
+        assert(BuildRows() && sRowKey.x == 0);
+    }
+    {
+        struct Sprite identity = {0};
+        struct OamMatrix saved = gOamMatrices[7];
+        identity.oam.affineMode = ST_OAM_AFFINE_NORMAL;
+        identity.oam.matrixNum = 7;
+        SetOamMatrix(7, 256, 0, 0, 256);
+        assert(!HasUncertainBounds(&identity));
+        SetOamMatrix(7, -256, 0, 0, 256);
+        assert(!HasUncertainBounds(&identity));
+        SetOamMatrix(7, 0, -256, 256, 0);
+        assert(HasUncertainBounds(&identity));
+        gOamMatrices[7] = saved;
+    }
+    Ready();
+    puts("PASS: easing endpoints/monotonicity, unchanged-row cache, shake/blend/environment invalidation");
+}
+
 static void TestMoveCamera(void);
 
 int main(void)
@@ -243,6 +303,7 @@ int main(void)
     memcpy(sOriginal, gSprites, sizeof(sOriginal));
 
     TestDepthProjection();
+    TestCinematicMath();
 
     // BW2 normal threshold: 900 WAIT updates, then admission on the next one.
     Ready();
@@ -564,14 +625,64 @@ static void TestMoveCamera(void)
         assert(memcmp(sOriginal, gSprites, sizeof(sOriginal)) == 0 && sAllocated == 0);
     }
     FinishTestMove();
+    // Bounds-aware framing: retain a large actor at the edge, reduce extra zoom.
+    {
+        u8 id = gBattlerSpriteIds[1];
+        s16 oldX = gSprites[id].x;
+        gSprites[id].x = 207;
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+        // Pan creates room on the right; changing to self/no pan is stricter.
+        SetMoveGoal(0, 8, 12);
+        assert(sCamera.targetZoom == 256);
+        FinishTestMove();
+        gSprites[id].oam.size = 1; // Small16px art at the same location needs less room.
+        gSprites[id].centerToCornerVecX = gSprites[id].centerToCornerVecY = -8;
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+        SetMoveGoal(0, 8, 12);
+        assert(sCamera.targetZoom > 256);
+        for (i = 0; i < 10; i++) Tick(0);
+        FinishTestMove();
+        gSprites[id].oam.size = 3;
+        gSprites[id].centerToCornerVecX = gSprites[id].centerToCornerVecY = -32;
+        gSprites[id].x = oldX;
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    }
+
     // Melee opens on the user, then actual hitsplat creation requests impact focus.
     StartTestMove(MOVE_HEADBUTT, 0, 1, TARGET_SELECTED, gBattleAnimMove_Headbutt);
     assert(sCamera.targetX == 0);
     for (i = 0; i < 4; i++) Tick(0);
     BattleCamera_OnSpriteCreated(10, ANIM_TAG_IMPACT);
     assert(sMoveCamera.phase == CAMERA_PHASE_IMPACT && sCamera.targetX > 0);
-    for (i = 0; i < 8; i++) Tick(0);
+    {
+        u16 elapsed;
+        s16 goal = sCamera.targetX;
+        for (i = 0; i < 2; i++) Tick(0);
+        elapsed = sMoveCamera.elapsed;
+        BattleCamera_OnSpriteCreated(11, ANIM_TAG_IMPACT);
+        assert(sMoveCamera.elapsed == elapsed && sCamera.targetX == goal);
+        assert(sMoveCamera.impactSeen && sMoveCamera.shakeTick == 2);
+        for (i = 0; i < 10; i++)
+        {
+            Tick(0);
+            assert(abs(sShakeX) <= BATTLE_CAMERA_MAX_SHAKE_X * 256);
+            assert(abs(sShakeY) <= BATTLE_CAMERA_MAX_SHAKE_Y * 256);
+        }
+        assert(sShakeX == 0 && sShakeY == 0);
+    }
     FinishTestMove();
+    assert(sShakeX == 0 && sShakeY == 0 && !sRowsValid);
+    StartTestMove(MOVE_HEADBUTT, 1, 0, TARGET_SELECTED, gBattleAnimMove_Headbutt);
+    assert(!sMoveCamera.impactSeen);
+    BattleCamera_OnSpriteCreated(11, ANIM_TAG_IMPACT);
+    assert(sMoveCamera.impactSeen && sMoveCamera.shakeTick == 0);
+    Tick(0);
+    BattleCamera_InterruptAnimation();
+    Tick(0);
+    assert(!sMoveCamera.active && sShakeX == 0 && sShakeY == 0);
+    gAnimScriptActive = FALSE;
 
     // Spread and field are stable group/neutral framing, never first-target focus.
     StartTestMove(MOVE_GROWL, 0, 1, TARGET_BOTH, gBattleAnimMove_Growl);
