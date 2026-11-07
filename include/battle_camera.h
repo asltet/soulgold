@@ -15,11 +15,39 @@
 #define BATTLE_CAMERA_IDLE_DOUBLES_PAN_X 12 // Preserve the near edge in doubles.
 #define BATTLE_CAMERA_IDLE_PAN_Y 2          // Less vertical scenery deformation.
 #define BATTLE_CAMERA_MAX_PAN_Y 4           // Upward camera pan, pixels.
-#define BATTLE_CAMERA_PERSPECTIVE 64        // Far image-scale attenuation.
 #define BATTLE_CAMERA_PARALLAX 160          // Far pan attenuation (0 = uniform).
 #define BATTLE_CAMERA_EASING_SMOOTHSTEP 1
 #define BATTLE_CAMERA_EASING BATTLE_CAMERA_EASING_SMOOTHSTEP // 0 = linear.
 #define BATTLE_CAMERA_WAIT_TICKS 900        // BW2 normal initial idle threshold.
+
+// Q8 depth planes. Select 0 for restrained, 1 for cinematic (default).
+#ifndef BATTLE_CAMERA_DEPTH_PRESET
+#define BATTLE_CAMERA_DEPTH_PRESET 1
+#endif
+#define BATTLE_CAMERA_MIDGROUND_Y 72
+#define BATTLE_CAMERA_OTHER_ENV_DEPTH 128 // Restrained until artwork-specific audit.
+#if BATTLE_CAMERA_DEPTH_PRESET == 0
+#define BATTLE_CAMERA_BACKGROUND_MOTION 64
+#define BATTLE_CAMERA_MIDGROUND_MOTION 160
+#define BATTLE_CAMERA_FOREGROUND_MOTION 256
+#define BATTLE_CAMERA_PERSPECTIVE 128
+#define BATTLE_CAMERA_BACKGROUND_ZOOM 128
+#define BATTLE_CAMERA_MIDGROUND_ZOOM 192
+#elif BATTLE_CAMERA_DEPTH_PRESET == 1
+#define BATTLE_CAMERA_BACKGROUND_MOTION 0
+#define BATTLE_CAMERA_MIDGROUND_MOTION 64
+#define BATTLE_CAMERA_FOREGROUND_MOTION 256
+#define BATTLE_CAMERA_PERSPECTIVE 256
+#define BATTLE_CAMERA_BACKGROUND_ZOOM 32
+#define BATTLE_CAMERA_MIDGROUND_ZOOM 128
+#else
+#error Unknown camera depth preset
+#endif
+// Contacts share projection; size responses may be reduced, never amplified.
+#define BATTLE_CAMERA_BATTLER_DEPTH_SCALE 256
+#define BATTLE_CAMERA_SHADOW_DEPTH_SCALE 256
+#define BATTLE_CAMERA_PLATFORM_DEPTH_SCALE 256 // Baked floor: must remain 256.
+#define BATTLE_CAMERA_PITCH_APPROXIMATION 0    // Unsupported: no extra pitch.
 
 // Prepared battle-background artwork profile: unwrapped X 0..255, Y -16..175.
 #define BATTLE_CAMERA_HORIZON 32
@@ -59,6 +87,25 @@
 #endif
 #if BATTLE_CAMERA_EASING != 0 && BATTLE_CAMERA_EASING != BATTLE_CAMERA_EASING_SMOOTHSTEP
 #error Unsupported camera easing
+#endif
+
+#if BATTLE_CAMERA_MIDGROUND_Y <= BATTLE_CAMERA_HORIZON || BATTLE_CAMERA_MIDGROUND_Y >= BATTLE_CAMERA_NEAR_CONTACT
+#error Invalid scene depth anchors
+#endif
+#if BATTLE_CAMERA_BACKGROUND_MOTION < 0 || BATTLE_CAMERA_BACKGROUND_MOTION > BATTLE_CAMERA_MIDGROUND_MOTION || BATTLE_CAMERA_MIDGROUND_MOTION > BATTLE_CAMERA_FOREGROUND_MOTION || BATTLE_CAMERA_FOREGROUND_MOTION > 256
+#error Invalid depth motion weights
+#endif
+#if BATTLE_CAMERA_BACKGROUND_ZOOM < 0 || BATTLE_CAMERA_BACKGROUND_ZOOM > BATTLE_CAMERA_MIDGROUND_ZOOM || BATTLE_CAMERA_MIDGROUND_ZOOM > 256
+#error Invalid depth zoom weights
+#endif
+#if BATTLE_CAMERA_BATTLER_DEPTH_SCALE < 0 || BATTLE_CAMERA_BATTLER_DEPTH_SCALE > 256 || BATTLE_CAMERA_SHADOW_DEPTH_SCALE < 0 || BATTLE_CAMERA_SHADOW_DEPTH_SCALE > 256
+#error Invalid scene image response
+#endif
+#if BATTLE_CAMERA_OTHER_ENV_DEPTH < 0 || BATTLE_CAMERA_OTHER_ENV_DEPTH > 256
+#error Invalid fallback environment strength
+#endif
+#if BATTLE_CAMERA_PLATFORM_DEPTH_SCALE != 256 || BATTLE_CAMERA_PITCH_APPROXIMATION != 0
+#error Baked platforms require shared floor projection; pitch is not supported
 #endif
 
 enum BattleCameraMovePhase

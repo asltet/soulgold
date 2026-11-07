@@ -141,6 +141,73 @@ static void ForceTrack(u8 track)
     BeginLeg();
 }
 
+static void TestDepthProjection(void)
+{
+    u32 zoom, blend, environment;
+    s32 y, source;
+    Ready();
+    sCamera.x = BATTLE_CAMERA_MAX_PAN_X * 256;
+    sCamera.y = -512;
+    sCamera.zoom = 288;
+#if BATTLE_CAMERA_DEPTH_PRESET == 1
+    // Independent golden Plain contacts: far/mid slopes 260/272, near288.
+    assert(GroundY(32) == 32);
+    assert(GroundY(72) == 75);
+    assert(GroundY(120) == 129);
+    assert(SceneScale(32, 256) == 260);
+    assert(SceneScale(72, 256) == 272);
+    assert(SceneScale(120, 256) == 288);
+    assert(PanAt(32) == 6 && PanAt(72) == 8 && PanAt(120) == 16);
+#endif
+    assert(SceneScale(32, 256) < SceneScale(120, 256));
+    assert(SceneScale(72, BATTLE_CAMERA_BATTLER_DEPTH_SCALE)
+        == SceneScale(72, BATTLE_CAMERA_SHADOW_DEPTH_SCALE));
+    for (zoom = 256; zoom <= BATTLE_CAMERA_MAX_ZOOM; zoom++)
+        for (y = -BATTLE_CAMERA_MAX_PAN_Y * 256; y <= 0; y += 256)
+            for (blend = 0; blend <= 256; blend += 32)
+            {
+                sCamera.zoom = zoom;
+                sCamera.y = y;
+                sMoveCamera.active = TRUE;
+                sMoveBlend = blend;
+                assert(BuildRows());
+                CheckRows();
+                for (source = BATTLE_CAMERA_SOURCE_MIN_Y + 1; source <= BATTLE_CAMERA_SOURCE_MAX_Y; source++)
+                    assert(GroundY(source) >= GroundY(source - 1));
+                if (blend == 256)
+                {
+                    // Endpoint must remain the legacy uniform animation model.
+                    for (source = 0; source <= 160; source++)
+                        assert(abs(GroundY(source) - (32 + ((source - 32) * 256 - y) * (s32)zoom / 65536)) <= 1);
+                    assert(PanAt(32) == PanAt(120));
+                }
+            }
+    Ready();
+    assert(BuildRows());
+    for (source = 0; source <= DISPLAY_HEIGHT; source++)
+        assert(sRows[source] == 0); // Neutral must be bit-exact identity.
+    BattleCamera_SetEnvironment(BATTLE_ENVIRONMENT_CAVE);
+    assert(sSceneDepthStrength == BATTLE_CAMERA_OTHER_ENV_DEPTH);
+    for (environment = 0; environment < BATTLE_ENVIRONMENT_COUNT; environment++)
+    {
+        BattleCamera_SetEnvironment(environment);
+        sCamera.x = BATTLE_CAMERA_MAX_PAN_X * 256;
+        sCamera.y = -BATTLE_CAMERA_MAX_PAN_Y * 256;
+        sCamera.zoom = BATTLE_CAMERA_MAX_ZOOM;
+        for (blend = 0; blend <= 256; blend += 128)
+        {
+            sMoveCamera.active = TRUE;
+            sMoveBlend = blend;
+            assert(BuildRows());
+            CheckRows();
+        }
+    }
+    BattleCamera_SetEnvironment(BATTLE_ENVIRONMENT_COUNT);
+    assert(!sSceneReady);
+    Ready();
+    puts("PASS: depth contacts, scale planes, monotonic floor/inverse, full envelope/blend sweep, neutral identity, environment fallback");
+}
+
 static void TestMoveCamera(void);
 
 int main(void)
@@ -174,6 +241,8 @@ int main(void)
         gSprites[i].centerToCornerVecY = -32;
     }
     memcpy(sOriginal, gSprites, sizeof(sOriginal));
+
+    TestDepthProjection();
 
     // BW2 normal threshold: 900 WAIT updates, then admission on the next one.
     Ready();
@@ -219,7 +288,7 @@ int main(void)
     ForceTrack(0);
     for (i = 0; i < 90; i++) Tick(0);
     assert(PanAt(BATTLE_CAMERA_NEAR_CONTACT) == 16);
-    assert(PanAt(BATTLE_CAMERA_HORIZON) == 6);
+    assert(PanAt(BATTLE_CAMERA_HORIZON) < PanAt(BATTLE_CAMERA_NEAR_CONTACT));
     assert(sCamera.y == -BATTLE_CAMERA_IDLE_PAN_Y * 256);
 
     // Cosmetic selection has six outcomes and forbids consecutive repeats.
@@ -291,7 +360,7 @@ int main(void)
     assert(sCamera.zoom == 284);
     assert(gOamMatrices[gSprites[0].oam.matrixNum].b == -230);
     assert(gOamMatrices[gSprites[0].oam.matrixNum].c == 230);
-    assert(gOamMatrices[gSprites[1].oam.matrixNum].a == -233);
+    assert(gOamMatrices[gSprites[1].oam.matrixNum].a == -(65536 / SceneScale(72, BATTLE_CAMERA_BATTLER_DEPTH_SCALE)));
     gMain.oamLoadDisabled = TRUE;
     {
         u8 previous = gScanlineEffect.srcBuffer;

@@ -136,3 +136,21 @@ durations are unchanged. All six tracks emphasize lateral movement. Settings
 live in include/battle_camera.h; keys in src/data/battle_camera_tracks.h.
 Read reports/faux3d-camera-handoff-and-idle-tuning.md in the parent workspace
 for validation limits and the pending emulator checklist.
+
+## Prompt9 depth bands (2026-11-07)
+
+The camera now shares artwork-space depth weights across row parallax, ground
+projection and battler/shadow scaling. Plain uses full depth strength; other
+recognized environments use a restrained fallback. No additional BG/OBJ layer
+or artwork was allocated. Fully blended move animations retain uniform scene
+projection for their existing effects.
+
+`BATTLE_CAMERA_DEPTH_PRESET` in include/battle_camera.h is1 cinematic by default,
+0 conservative. To exercise both with a native GCC, compile this fixture normally
+and again with `-DBATTLE_CAMERA_DEPTH_PRESET=0`. TestDepthProjection sweeps zoom,
+vertical pan, handoff weights, source contacts and all environment admissions;
+it also checks independent golden contacts and bit-exact neutral row identity.
+The native fixture is not an emulator or a cycle benchmark.
+
+Parent-workspace reports/faux3d-depth-implementation.md links the six Prompt9
+reports, source map, full-build blocker and detailed pending emulator matrix.

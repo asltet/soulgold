@@ -57,6 +57,7 @@ static EWRAM_DATA u16 sHandoffTick = 0;
 static EWRAM_DATA u8 sLastTrack = 0;
 static EWRAM_DATA u32 sVisualRandom = 0;
 static EWRAM_DATA bool8 sSceneReady = FALSE;
+static EWRAM_DATA u16 sSceneDepthStrength = 0;
 static EWRAM_DATA bool8 sOwnsScanlines = FALSE;
 static EWRAM_DATA u32 sScanlineGeneration = 0;
 // Include the transfer after the final visible row. Main-loop scratch only;
@@ -161,6 +162,7 @@ void BattleCamera_Reset(void)
 {
     BattleCamera_Cancel();
     sSceneReady = FALSE;
+    sSceneDepthStrength = 0;
     sLastTrack = 0xFF;
     sVisualRandom = gMain.vblankCounter1 ^ 0x6D2B79F5;
 }
@@ -170,6 +172,8 @@ void BattleCamera_SetEnvironment(u16 environment)
     BattleCamera_Cancel();
     // Called by the actual loader after environment overrides are resolved.
     sSceneReady = environment < BATTLE_ENVIRONMENT_COUNT;
+    // Shared coverage does not imply that every illustration has Plain's depth.
+    sSceneDepthStrength = environment == BATTLE_ENVIRONMENT_PLAIN ? 256 : BATTLE_CAMERA_OTHER_ENV_DEPTH;
 }
 
 static s16 Ease(s16 destination, u16 frame, u16 duration)
@@ -228,47 +232,95 @@ static bool32 AdvanceTrack(void)
     return TRUE;
 }
 
+// Artwork-space depth, not a recovered BW2 world coordinate. The same anchors
+// drive parallax, image scale, floor forward mapping and inverse BG sampling.
+static s32 PlaneWeight(s32 sourceY, s32 far, s32 middle, s32 near)
+{
+    if (sourceY <= BATTLE_CAMERA_HORIZON)
+        return far;
+    if (sourceY < BATTLE_CAMERA_MIDGROUND_Y)
+        return far + (middle - far) * (sourceY - BATTLE_CAMERA_HORIZON)
+                   / (BATTLE_CAMERA_MIDGROUND_Y - BATTLE_CAMERA_HORIZON);
+    if (sourceY < BATTLE_CAMERA_NEAR_CONTACT)
+        return middle + (near - middle) * (sourceY - BATTLE_CAMERA_MIDGROUND_Y)
+                      / (BATTLE_CAMERA_NEAR_CONTACT - BATTLE_CAMERA_MIDGROUND_Y);
+    return near;
+}
+
+static s32 EnvironmentWeight(s32 weight)
+{
+    return 256 - (256 - weight) * sSceneDepthStrength / 256;
+}
+
 static s32 DepthWeight(s32 sourceY)
 {
-    s32 depth = (sourceY - BATTLE_CAMERA_HORIZON) * 256
-              / (BATTLE_CAMERA_NEAR_CONTACT - BATTLE_CAMERA_HORIZON);
-    depth = max(0, min(256, depth));
-    return 256 - BATTLE_CAMERA_PARALLAX + depth * BATTLE_CAMERA_PARALLAX / 256;
+    s32 plane = PlaneWeight(sourceY, BATTLE_CAMERA_BACKGROUND_MOTION,
+                           BATTLE_CAMERA_MIDGROUND_MOTION, BATTLE_CAMERA_FOREGROUND_MOTION);
+    return EnvironmentWeight(256 - BATTLE_CAMERA_PARALLAX + plane * BATTLE_CAMERA_PARALLAX / 256);
+}
+
+static s32 MoveBlend(s32 idle, s32 move)
+{
+    return sMoveCamera.active ? idle + (move - idle) * sMoveBlend / 256 : idle;
 }
 
 static s32 PanAt(s32 sourceY)
 {
-    s32 weight;
-    if (sMoveCamera.active && sMoveBlend == 256)
-        return sCamera.x / 256;
-    weight = DepthWeight(sourceY);
-    if (sMoveCamera.active)
-        weight += (256 - weight) * sMoveBlend / 256;
-    return sCamera.x * weight / 65536;
+    return sCamera.x * MoveBlend(DepthWeight(sourceY), 256) / 65536;
+}
+
+static s32 SceneScale(s32 sourceY, s32 response)
+{
+    s32 weight = PlaneWeight(sourceY, BATTLE_CAMERA_BACKGROUND_ZOOM,
+                            BATTLE_CAMERA_MIDGROUND_ZOOM, 256);
+    // PERSPECTIVE=0 preserves equal image zoom; 256 uses full plane separation.
+    weight = EnvironmentWeight(256 - BATTLE_CAMERA_PERSPECTIVE + weight * BATTLE_CAMERA_PERSPECTIVE / 256);
+    return MoveBlend(256 + (sCamera.zoom - 256) * weight * response / 65536, sCamera.zoom);
+}
+
+static s32 FloorSlope(s32 weight)
+{
+    return MoveBlend(256 + (sCamera.zoom - 256) * EnvironmentWeight(weight) / 256, sCamera.zoom);
+}
+
+static s32 HorizonQ8(void)
+{
+    s32 translation = -sCamera.y * sCamera.zoom / 256;
+    return BATTLE_CAMERA_HORIZON * 256 + MoveBlend(translation * DepthWeight(BATTLE_CAMERA_HORIZON) / 256, translation);
 }
 
 static s32 GroundY(s32 sourceY)
 {
-    if (sMoveCamera.active && sMoveBlend == 256 && sCamera.zoom == 256)
-        return sourceY - sCamera.y / 256;
-    return BATTLE_CAMERA_HORIZON
-         + ((sourceY - BATTLE_CAMERA_HORIZON) * 256 - sCamera.y) * sCamera.zoom / 65536;
+    s32 result = HorizonQ8();
+    if (sourceY < BATTLE_CAMERA_HORIZON)
+        result += (sourceY - BATTLE_CAMERA_HORIZON) * FloorSlope(BATTLE_CAMERA_BACKGROUND_ZOOM);
+    else if (sourceY < BATTLE_CAMERA_MIDGROUND_Y)
+        result += (sourceY - BATTLE_CAMERA_HORIZON) * FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM);
+    else
+        result += (BATTLE_CAMERA_MIDGROUND_Y - BATTLE_CAMERA_HORIZON) * FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM)
+                + (sourceY - BATTLE_CAMERA_MIDGROUND_Y) * FloorSlope(256);
+    return result / 256;
 }
 
 static bool32 BuildRows(void)
 {
     u32 row;
-    s32 inverseZoom = 16777216 / sCamera.zoom;
+    s32 horizon = HorizonQ8();
+    s32 middle = horizon + (BATTLE_CAMERA_MIDGROUND_Y - BATTLE_CAMERA_HORIZON) * FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM);
+    // Three reciprocals per table, no per-row perspective division. Q16
+    // reciprocal products are preshifted to stay within signed 32-bit range.
+    s32 inverseFar = 16777216 / FloorSlope(BATTLE_CAMERA_BACKGROUND_ZOOM);
+    s32 inverseMiddle = 16777216 / FloorSlope(BATTLE_CAMERA_MIDGROUND_ZOOM);
+    s32 inverseNear = 16777216 / FloorSlope(256);
     for (row = 0; row <= DISPLAY_HEIGHT; row++)
     {
-        s32 sourceY = BATTLE_CAMERA_HORIZON
-                    + ((((s32)row - BATTLE_CAMERA_HORIZON) * inverseZoom / 256
-                    + sCamera.y) / 256);
+        s32 screen = row * 256;
+        s32 origin = screen < middle ? horizon : middle;
+        s32 anchor = screen < middle ? BATTLE_CAMERA_HORIZON : BATTLE_CAMERA_MIDGROUND_Y;
+        s32 inverse = screen < horizon ? inverseFar : screen < middle ? inverseMiddle : inverseNear;
+        s32 sourceY = anchor + ((screen - origin) / 16) * inverse / 1048576;
         s32 sourceX = PanAt(sourceY);
-        if (sMoveCamera.active && sMoveBlend == 256 && sCamera.zoom == 256)
-            sourceY = (s32)row + sCamera.y / 256;
-        // Validate unwrapped coordinates before encoding GBA register bits.
-        // Negative Y samples address the explicitly mirrored map rows30/31.
+        // Reject unwrapped samples before encoding hardware register bits.
         if (sourceY < BATTLE_CAMERA_SOURCE_MIN_Y || sourceY > BATTLE_CAMERA_SOURCE_MAX_Y
             || sourceX < 0 || sourceX + DISPLAY_WIDTH > 256)
             return FALSE;
@@ -459,18 +511,16 @@ compose:
         anchorY = GetBattlerSpriteCoord(battler, BATTLER_COORD_Y) + MON_PIC_HEIGHT / 2;
         if (GetBattlerSide(battler) == B_SIDE_PLAYER)
             anchorY += 8; // Matches GetBattlerSpriteFinal_Y's player adjustment.
-        scale = 256 + (sCamera.zoom - 256)
-              * (256 - BATTLE_CAMERA_PERSPECTIVE + DepthWeight(anchorY) * BATTLE_CAMERA_PERSPECTIVE / 256) / 256;
-        if (sMoveCamera.active)
-            scale += (sCamera.zoom - scale) * sMoveBlend / 256;
+        scale = SceneScale(anchorY, BATTLE_CAMERA_BATTLER_DEPTH_SCALE);
         if (!TransformSprite(id, anchorX, anchorY, scale))
             goto cancel;
         if (GetBattlerSide(battler) == B_SIDE_OPPONENT)
         {
-            if (!TransformSprite(gBattleSpritesDataPtr->healthBoxesData[battler].shadowSpriteIdPrimary, anchorX, anchorY, scale))
+            s16 shadowScale = SceneScale(anchorY, BATTLE_CAMERA_SHADOW_DEPTH_SCALE);
+            if (!TransformSprite(gBattleSpritesDataPtr->healthBoxesData[battler].shadowSpriteIdPrimary, anchorX, anchorY, shadowScale))
                 goto cancel;
             if (B_ENEMY_MON_SHADOW_STYLE >= GEN_4 && P_GBA_STYLE_SPECIES_GFX == FALSE
-                && !TransformSprite(gBattleSpritesDataPtr->healthBoxesData[battler].shadowSpriteIdSecondary, anchorX, anchorY, scale))
+                && !TransformSprite(gBattleSpritesDataPtr->healthBoxesData[battler].shadowSpriteIdSecondary, anchorX, anchorY, shadowScale))
                 goto cancel;
         }
     }
