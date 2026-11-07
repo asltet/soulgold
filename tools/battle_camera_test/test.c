@@ -669,7 +669,7 @@ static void TestMoveCamera(void)
     assert(sCamera.targetX == 0);
     for (i = 0; i < 4; i++) Tick(0);
     BattleCamera_OnSpriteCreated(10, ANIM_TAG_IMPACT);
-    assert(sMoveCamera.phase == CAMERA_PHASE_IMPACT && sCamera.targetX > 0);
+    assert(sMoveCamera.phase == CAMERA_PHASE_TARGET_FOCUS && sMoveCamera.targetAcquired && sCamera.targetX > 0);
     {
         u16 elapsed;
         s16 goal = sCamera.targetX;
@@ -677,7 +677,7 @@ static void TestMoveCamera(void)
         elapsed = sMoveCamera.elapsed;
         BattleCamera_OnSpriteCreated(11, ANIM_TAG_IMPACT);
         assert(sMoveCamera.elapsed == elapsed && sCamera.targetX == goal);
-        assert(sMoveCamera.impactSeen && sMoveCamera.shakeTick == 2);
+        assert(sMoveCamera.impactSeen && sMoveCamera.shakeTick == 0);
         for (i = 0; i < 10; i++)
         {
             Tick(0);
@@ -766,7 +766,7 @@ static void TestMoveCamera(void)
     BattleCamera_BlockMove();
     BattleCamera_EndMove(); // End cannot override an unsupported-command cancellation.
     Tick(0);
-    assert(sMoveCamera.active && sMoveCamera.blocked && sMoveCamera.deferred && !sOwnsScanlines);
+    assert(sMoveCamera.active && sMoveCamera.blocked && sMoveCamera.suspended && !sOwnsScanlines);
     gAnimScriptActive = FALSE;
     for (i = 0; i < 40; i++) Tick(0);
     assert(!sMoveCamera.active);
@@ -812,7 +812,7 @@ static void TestMoveCamera(void)
     }
     BattleCamera_EndMove();
     gAnimScriptActive = FALSE;
-    for (i = 0; i < 24; i++) Tick(1u << 7);
+    for (i = 0; i < 40; i++) Tick(1u << 7);
     assert(!sMoveCamera.active && sAllocated == (1u << 7));
     gSprites[0].oam.affineMode = ST_OAM_AFFINE_OFF;
     gSprites[0].oam.matrixNum = 0;
@@ -872,23 +872,106 @@ static void TestMoveCamera(void)
                     : move % 5 == 2 ? TARGET_ALLY : move % 5 == 3 ? TARGET_BOTH : TARGET_SELECTED;
             u8 target = type == TARGET_FIELD ? MAX_BATTLERS_COUNT : type == TARGET_ALLY ? 2 : 1;
             StartTestMove(move, 0, target, type, gMovesInfo[move].battleAnimScript);
-            assert(sMoveCamera.active && !sMoveCamera.blocked);
+            assert(sMoveCamera.active && (!sMoveCamera.blocked || sMoveCamera.framing == BW2_FRAME_STILL));
             for (n = 0; n < 4; n++) Tick(0);
             FinishTestMove();
         }
         printf("PASS: universal dispatcher for %u synthetic canonical move IDs\n", MOVES_COUNT_ALL - 1);
     }
-    // Complex scripts suspend first, then cue after release, without VM waits.
+    // Approved Ember retains exactly the previous timing/strength configuration.
+    assert(sMoveProfiles[MOVE_CAMERA_EMBER].start == 8);
+    assert(sMoveProfiles[MOVE_CAMERA_EMBER].travel == 24);
+    assert(sMoveProfiles[MOVE_CAMERA_EMBER].impact == 6);
+    assert(sMoveProfiles[MOVE_CAMERA_EMBER].restore == 10);
+    assert(sMoveProfiles[MOVE_CAMERA_EMBER].pan == 256);
+    assert(sMoveProfiles[MOVE_CAMERA_EMBER].zoom == 24);
+
+    // Target-only patterns do not restart acquisition on impact or return early.
+    StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
+    for (i = 0; i < 12; i++) Tick(0);
+    {
+        u16 elapsed = sMoveCamera.elapsed;
+        BattleCamera_OnSpriteCreated(10, ANIM_TAG_IMPACT);
+        assert(sMoveCamera.elapsed == elapsed);
+    }
+    for (i = 0; i < 80; i++) Tick(0);
+    assert(sMoveCamera.phase == CAMERA_PHASE_ATTACK_PRESENTATION && sCamera.x > 0);
+    BattleCamera_EndMove();
+    gAnimScriptActive = FALSE;
+    {
+        s16 previous = sCamera.x;
+        for (i = 0; i < 28; i++)
+        {
+            Tick(0);
+            assert(sCamera.x <= previous && previous - sCamera.x <= 512);
+            previous = sCamera.x;
+        }
+        assert(!sMoveCamera.active && sCamera.x == 0);
+    }
+
+    // A travel profile holds user focus until actual visual completion, not age.
+    StartTestMove(MOVE_WATER_GUN, 0, 1, TARGET_SELECTED, sGenericMoveScript);
+    assert(sMoveCamera.framing == BW2_FRAME_TRAVEL && sCamera.targetX == 0);
+    for (i = 0; i < 40; i++) Tick(0);
+    assert(!sMoveCamera.targetAcquired && sCamera.targetX == 0);
+    BattleCamera_OnVisualBarrier();
+    assert(!sMoveCamera.targetAcquired); // No actual visuals yet.
+    BattleCamera_OnSpriteCreated(9, 0);
+    BattleCamera_OnVisualBarrier();
+    assert(sMoveCamera.targetAcquired && sCamera.targetX > 0);
+    Tick(0);
+    {
+        u16 elapsed = sMoveCamera.elapsed;
+        BattleCamera_OnVisualBarrier();
+        assert(sMoveCamera.elapsed == elapsed);
+    }
+    for (i = 0; i < 60; i++) Tick(0);
+    assert(sMoveCamera.active && sCamera.x > 0 && gAnimScriptActive);
+    FinishTestMove();
+
+    // Mon-as-BG images follow the exact same1x translation while hidden in OBJ.
+    StartTestMove(MOVE_TACKLE, 0, 1, TARGET_SELECTED, sGenericMoveScript);
+    for (i = 0; i < 18; i++) Tick(0);
+    BattleCamera_AttachMonBg(1, 1);
+    assert(sMoveCamera.bgLayer[1] == 1 && !sMoveCamera.blocked);
+    gSprites[gBattlerSpriteIds[1]].invisible = TRUE;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    for (i = 0; i < 30; i++)
+    {
+        Tick(0);
+        assert(sCamera.active && sCamera.zoom == 256);
+        assert(BattleCamera_GetMonBgOffset(1, FALSE) == PanAt(72));
+        assert(GroundY(72) - 72 == -BattleCamera_GetMonBgOffset(1, TRUE));
+        assert(BattleCamera_GetMonBgOffset(2, FALSE) == 0);
+    }
+    BattleCamera_AttachMonBg(2, 2);
+    gSprites[gBattlerSpriteIds[2]].invisible = TRUE;
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    for (i = 0; i < 4; i++)
+    {
+        Tick(0);
+        assert(BattleCamera_GetMonBgOffset(1, FALSE) == BattleCamera_GetMonBgOffset(2, FALSE));
+        assert(BattleCamera_GetMonBgOffset(1, TRUE) == BattleCamera_GetMonBgOffset(2, TRUE));
+    }
+    gSprites[gBattlerSpriteIds[2]].invisible = FALSE;
+    BattleCamera_ClearMonBg(2);
+    gSprites[gBattlerSpriteIds[1]].invisible = FALSE;
+    BattleCamera_ClearMonBg(1);
+    memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    assert(BattleCamera_GetMonBgOffset(1, FALSE) == 0);
+    FinishTestMove();
+
+    // BG replacement suspends until completion, with no late focus/zoom pulse.
     StartTestMove(MOVE_TACKLE, 0, 1, TARGET_SELECTED, sGenericMoveScript);
     assert(sMoveCamera.generic && sCamera.targetZoom == 256);
     BattleCamera_BlockMove();
     Tick(0);
-    assert(sMoveCamera.deferred && !sCamera.active);
+    assert(sMoveCamera.suspended && !sCamera.active);
     for (i = 0; i < 10; i++) Tick(0);
     gAnimScriptActive = FALSE;
     Tick(0);
-    assert(sMoveCamera.postlude && !sMoveCamera.blocked && sCamera.active);
-    assert(sCamera.targetZoom > 256);
+    assert(!sMoveCamera.active && !sCamera.active); // Never invent a shot after an incompatible effect.
+    assert(sCamera.targetZoom == 256);
     for (i = 0; i < 40; i++) Tick(0);
     assert(!sMoveCamera.active && !sOwnsScanlines);
     // Suspension in the launch transaction retains the executed action context.
@@ -896,7 +979,7 @@ static void TestMoveCamera(void)
     BattleCamera_StartMove(MOVE_TACKLE, 0, 1, TARGET_SELECTED, sGenericMoveScript);
     BattleCamera_BlockMove();
     Tick(0);
-    assert(sMoveCamera.move == MOVE_TACKLE && sMoveCamera.deferred);
+    assert(sMoveCamera.move == MOVE_TACKLE && sMoveCamera.suspended);
     BattleCamera_InterruptAnimation();
     BattleCamera_BlockMove();
     Tick(0);
@@ -908,7 +991,7 @@ static void TestMoveCamera(void)
     BattleCamera_BlockMove(); Tick(0);
     gAnimScriptActive = FALSE;
     ScanlineEffect_SetParams((struct ScanlineEffectParams){(void *)REG_ADDR_BG3HOFS, SCANLINE_EFFECT_DMACNT_32BIT, 1, 0});
-    for (i = 0; i < BATTLE_CAMERA_RECOVERY_WAIT_TICKS + 2; i++) Tick(0);
+    for (i = 0; i < 64; i++) Tick(0);
     assert(!sMoveCamera.active && gScanlineEffect.state == 1);
     ScanlineEffect_Stop();
     Ready();

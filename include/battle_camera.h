@@ -6,8 +6,6 @@
 #define BATTLE_CAMERA_DEMO TRUE
 #define BATTLE_CAMERA_MAX_SCENE_SPRITES 24
 #define BATTLE_CAMERA_MOVE_MAX_TICKS 1200
-#define BATTLE_CAMERA_RECOVERY_WAIT_TICKS 60
-#define BATTLE_CAMERA_RECOVERY_FOCUS_TICKS 12
 #define BATTLE_CAMERA_FIELD_PAN_X 4
 #define BATTLE_CAMERA_MOVE_ZOOM_DELTA 24 // Up to1.094x; framing may reduce.
 #define BATTLE_CAMERA_HANDOFF_TICKS 16
@@ -128,9 +126,6 @@
 #if BATTLE_CAMERA_MOVE_ZOOM_DELTA < 0 || BATTLE_CAMERA_MOVE_ZOOM_DELTA > BATTLE_CAMERA_MAX_ZOOM - 256 || BATTLE_CAMERA_FIELD_PAN_X < 0 || BATTLE_CAMERA_FIELD_PAN_X > BATTLE_CAMERA_MOVE_PAN_X
 #error Universal camera cue exceeds artwork envelope
 #endif
-#if BATTLE_CAMERA_RECOVERY_WAIT_TICKS < 1 || BATTLE_CAMERA_RECOVERY_WAIT_TICKS > 300 || BATTLE_CAMERA_RECOVERY_FOCUS_TICKS < 1 || BATTLE_CAMERA_RECOVERY_FOCUS_TICKS > 60
-#error Invalid deferred camera cue timing
-#endif
 
 enum BattleCameraMovePhase
 {
@@ -147,6 +142,10 @@ void BattleCamera_EndMove(void);
 void BattleCamera_InterruptAnimation(void);
 void BattleCamera_OnSpriteCreated(u8 spriteId, u16 tileTag);
 void BattleCamera_BlockMove(void);
+void BattleCamera_OnVisualBarrier(void);
+void BattleCamera_AttachMonBg(u8 battler, u8 bg);
+void BattleCamera_ClearMonBg(u8 bg);
+s16 BattleCamera_GetMonBgOffset(u8 bg, bool8 vertical);
 void BattleCamera_Reset(void);
 void BattleCamera_Cancel(void);
 void BattleCamera_SetEnvironment(u16 environment);

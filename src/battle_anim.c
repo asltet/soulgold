@@ -863,6 +863,7 @@ static void Cmd_waitforvisualfinish(void)
 {
     if (gAnimVisualTaskCount == 0)
     {
+        BattleCamera_OnVisualBarrier();
         sBattleAnimScriptPtr++;
         sAnimFramesToWait = 0;
     }
@@ -1006,7 +1007,6 @@ static void Cmd_monbg(void)
     enum BattlerId battler;
     enum AnimBattler animBattler;
 
-    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
 
     animBattler = sBattleAnimScriptPtr[0];
@@ -1100,6 +1100,8 @@ void MoveBattlerSpriteToBG(enum BattlerId battler, bool8 toBG_2, bool8 setSprite
     struct BattleAnimBgData animBg;
     u8 battlerSpriteId;
 
+    if (!IsContest())
+        BattleCamera_AttachMonBg(battler, toBG_2 ? 2 : 1);
     if (!toBG_2)
     {
         enum BattlerPosition battlerPosition;
@@ -1224,6 +1226,7 @@ void RelocateBattleBgPal(u16 paletteNum, u16 *dest, u32 offset, bool8 largeScree
 void ResetBattleAnimBg(bool8 toBG2)
 {
     struct BattleAnimBgData animBg;
+    BattleCamera_ClearMonBg(!toBG2 || IsContest() ? 1 : 2);
     GetBattleAnimBg1Data(&animBg);
 
     if (!toBG2 || IsContest())
@@ -1347,7 +1350,6 @@ static void Cmd_monbg_static(void)
     enum BattlerId battler;
     enum AnimBattler animBattlerId;
 
-    BattleCamera_BlockMove();
     sBattleAnimScriptPtr++;
 
     animBattlerId = sBattleAnimScriptPtr[0];

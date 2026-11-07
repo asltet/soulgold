@@ -183,3 +183,27 @@ The native fixture dispatches all935 nonzero move-ID slots with synthetic
 metadata, not935 actual animation scripts. It also tests deferred launch/end,
 cancel priority, busy-owner expiry and repeated cleanup. Read the parent report
 reports/faux3d-all-move-camera.md before treating earlier six-move lists as current.
+
+## BW2 research and animation-aligned correction (2026-11-07)
+
+Latest policy supersedes the generic after-effect cue above. Acquire and hold
+through actual animation completion, then return; no late zoom shot. Most
+acquisition/return profiles use24-32/28-32 logical updates. User-approved Ember
+retains its dedicated8/24/6/10 profile and old phase policy.
+
+The checked-in src/data/battle_camera_bw2_framing.h contains475 source-guided
+hints from601 BW2 script files. The offline generator reads the reference source;
+it is not part of the ROM build. To verify it from the SoulGold root:
+
+```sh
+python tools/battle_camera_test/research_bw2_moves.py ../pokebw2 --evidence ../reports/bw2-move-camera-script-inventory.json --check
+```
+
+The inventory is lexical, not proof of branch/video timing. Unknown moves keep
+conservative target/category defaults. Travel-style handoffs use actual visual
+completion or impact once. Mon-as-BG uses tracked BG1/BG2 uniform1x offsets;
+unsafe zoom inheritance/BG replacement still suspends, with no postlude.
+Native tests cover target hold, event-only acquisition, no reset on repeat,
+BG1/BG2 hidden actors, cleared bindings, smooth return and Ember preservation.
+Read reports/bw2-move-camera-resynchronization.md in the parent workspace for
+current source references, evidence and pending emulator validation.

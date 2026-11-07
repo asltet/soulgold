@@ -2244,10 +2244,13 @@ void VBlankCB_Battle(void)
 {
     SetGpuReg(REG_OFFSET_BG0HOFS, gBattle_BG0_X);
     SetGpuReg(REG_OFFSET_BG0VOFS, gBattle_BG0_Y);
-    SetGpuReg(REG_OFFSET_BG1HOFS, gBattle_BG1_X);
-    SetGpuReg(REG_OFFSET_BG1VOFS, gBattle_BG1_Y);
-    SetGpuReg(REG_OFFSET_BG2HOFS, gBattle_BG2_X);
-    SetGpuReg(REG_OFFSET_BG2VOFS, gBattle_BG2_Y);
+    if (!gMain.oamLoadDisabled)
+    {
+        SetGpuReg(REG_OFFSET_BG1HOFS, gBattle_BG1_X + BattleCamera_GetMonBgOffset(1, FALSE));
+        SetGpuReg(REG_OFFSET_BG1VOFS, gBattle_BG1_Y + BattleCamera_GetMonBgOffset(1, TRUE));
+        SetGpuReg(REG_OFFSET_BG2HOFS, gBattle_BG2_X + BattleCamera_GetMonBgOffset(2, FALSE));
+        SetGpuReg(REG_OFFSET_BG2VOFS, gBattle_BG2_Y + BattleCamera_GetMonBgOffset(2, TRUE));
+    }
     if (!gMain.oamLoadDisabled)
     {
         SetGpuReg(REG_OFFSET_BG3HOFS, gBattle_BG3_X + BattleCamera_GetBgX());
