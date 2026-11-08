@@ -1013,6 +1013,28 @@ static void TestMoveCamera(void)
             FinishTestMove();
         }
     }
+    // Cropped back sprites must not recede or lift while waiting for contact.
+    StartTestMove(MOVE_PECK, 1, 0, TARGET_SELECTED, gBattleAnimMove_Peck);
+    {
+        u32 zoom, battler;
+        sMoveBlend = 256;
+        sCamera.y = BATTLE_CAMERA_MAX_PAN_Y * 256;
+        for (zoom = 256; zoom <= BATTLE_CAMERA_MAX_ZOOM; zoom++)
+        {
+            sCamera.zoom = zoom;
+            for (battler = 0; battler < gBattlersCount; battler += 2)
+            {
+                s32 crop = GetBattlerSpriteCoord(battler, BATTLER_COORD_Y) + MON_PIC_HEIGHT / 2;
+                sMoveCamera.contextWeight[battler] = 256;
+                assert(ActorScale(battler, zoom) == zoom);
+                assert(GroundY(crop) >= crop - 1);
+            }
+            assert(BuildRows());
+        }
+        sCamera.zoom = 256;
+        assert(RenderY() == 0); // Before contact, no upward reveal at all.
+    }
+    FinishTestMove();
     // Possible freeze reactions reserve1x so later monbg status cannot reset the shot.
     StartTestMove(MOVE_ICE_BEAM, 0, 1, TARGET_SELECTED, sGenericMoveScript);
     assert(sMoveCamera.translationOnly && sCamera.targetZoom == 256 && sCamera.targetY != 0);
@@ -1189,7 +1211,7 @@ static void TestMoveCamera(void)
         assert(sMoveCamera.focusMask == 2);
         for (i = 0; i < 40; i++) Tick(0);
         assert(sMoveCamera.contextWeight[0] > 0 && sMoveCamera.contextWeight[1] == 0);
-        assert(ActorScale(0, sCamera.zoom) < ActorScale(1, sCamera.zoom));
+        assert(ActorScale(0, sCamera.zoom) == sCamera.zoom); // Cropped backs retain shared scene scale.
         StartTestMove(MOVE_PECK, 1, 0, TARGET_SELECTED, gBattleAnimMove_Peck);
         assert(sMoveCamera.contextWeight[0] > 0); // Inherit quiet context; fade into the next target.
         FinishTestMove();

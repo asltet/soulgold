@@ -340,9 +340,23 @@ static s32 RenderX(void)
 
 static s32 RenderY(void)
 {
-    return max(-BATTLE_CAMERA_MAX_PAN_Y * 256,
-               min(min(BATTLE_CAMERA_MAX_PAN_Y, BATTLE_CAMERA_SOURCE_MAX_Y - DISPLAY_HEIGHT) * 256,
-                   sCamera.y + sShakeY));
+    s32 y = max(-BATTLE_CAMERA_MAX_PAN_Y * 256,
+                min(min(BATTLE_CAMERA_MAX_PAN_Y, BATTLE_CAMERA_SOURCE_MAX_Y - DISPLAY_HEIGHT) * 256,
+                    sCamera.y + sShakeY));
+    u32 battler;
+    // Cropped back pictures cannot reveal additional body below their authored
+    // framing. Do not lift the near-side image while zoom is still waiting
+    // for contact. Apply the limit to the whole scene, including attached VFX.
+    if (sMoveCamera.active && !sMoveCamera.blocked)
+        for (battler = 0; battler < gBattlersCount; battler++)
+            if ((sMoveCamera.actorMask & (1u << battler)) && GetBattlerSide(battler) == B_SIDE_PLAYER)
+            {
+                s32 center = GetBattlerSpriteCoord(battler, BATTLER_COORD_Y);
+                s32 limit = max(0, center - BATTLE_CAMERA_HORIZON)
+                          * (sCamera.zoom - 256) * 256 / max(256, sCamera.zoom);
+                y = min(y, limit);
+            }
+    return y;
 }
 
 static bool32 HasMonBgActors(void);
@@ -517,6 +531,10 @@ static void UpdateActorEmphasis(void)
 
 static s32 ActorScale(u8 battler, s32 common)
 {
+    // Front images can recede independently. Back images are cropped portraits:
+    // shrinking them around a ground anchor exposes their unfinished lower edge.
+    if (GetBattlerSide(battler) == B_SIDE_PLAYER)
+        return common;
     return common + (QuietScale(common) - common) * sMoveCamera.contextWeight[battler] / 256;
 }
 
@@ -1026,7 +1044,8 @@ static void ClampMoveFraming(void)
             {
                 const struct Sprite *sprite = &gSprites[sMoveCamera.actorSprite[i]];
                 s32 x = sprite->x + sprite->x2 - sCamera.targetX / 256;
-                s32 scale = (sharedMask & (1u << i)) ? zoom : QuietScale(zoom);
+                s32 scale = ((sharedMask & (1u << i)) || GetBattlerSide(i) == B_SIDE_PLAYER)
+                          ? zoom : QuietScale(zoom);
                 s32 actorMargin = (sharedMask & (1u << i)) ? margin : 0;
                 s32 anchorY = GetBattlerSpriteCoord(i, BATTLER_COORD_Y) + MON_PIC_HEIGHT / 2
                             + (GetBattlerSide(i) == B_SIDE_PLAYER ? 8 : 0);
