@@ -243,3 +243,7 @@ emulator-measured wall-clock duration; no gameplay waits/tasks were added.
 ## Consistent move strength
 
 Generic moves now request full profile zoom after visual creation, with a separate eased clock to avoid catch-up snaps. Monbg and possible freeze/frostbite reaction paths retain compatible1? translation. Native regressions cover delayed visual activation,935 synthetic dispatches, action-completion holds and shared affine matrices with a single remaining hardware slot. These checks do not establish visual support for every move. See the workspace report `reports/faux3d-consistent-move-strength.md`; playtest both sides, doubles, monbg, status reactions and particle-heavy moves.
+
+## Recipient contact zoom
+
+Upward zoom now waits for a registered visible effect near the resolved recipient, an actual hit reaction, or recipient stat/status reaction start, for specialized and generic profiles alike. Tests cover travel before contact, arrival, self/ally/incoming cues and smooth action hold. Proximity is an approximation; visual onset for unusual VFX requires emulator capture and possibly explicit animation hooks. See workspace `reports/faux3d-recipient-contact-zoom.md`.

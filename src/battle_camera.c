@@ -124,7 +124,8 @@ struct MoveCameraState
     bool8 active, blocked, impactSeen, actionComplete;
     bool8 generic, suspended, translationOnly;
     u16 zoomElapsed;
-    bool8 visualSeen, targetAcquired;
+    bool8 visualSeen, targetAcquired, contactSeen;
+    u32 contactEffects[2];
     u8 framing, bgLayer[MAX_BATTLERS_COUNT];
     u8 focusMask, hitReactionMask;
     u16 contextWeight[MAX_BATTLERS_COUNT];
@@ -1168,6 +1169,8 @@ void BattleCamera_OnAnimationLaunch(u8 type, u16 animation, u8 battler)
         && gSprites[sMoveCamera.actorSprite[battler]].images == sMoveCamera.actorImages[battler])
     {
         sMoveCamera.age = 0;
+        if (sMoveCamera.targetMask & (1u << battler))
+            sMoveCamera.contactSeen = TRUE; // Recipient stat/status effect actually begins.
         return; // Continue the original shot; these effects are part of the move.
     }
     BattleCamera_InterruptAnimation();
@@ -1183,6 +1186,8 @@ void BattleCamera_OnHitReaction(u8 battler, bool8 active)
              && gBattlerSpriteIds[battler] == sMoveCamera.actorSprite[battler])
     {
         sMoveCamera.hitReactionMask |= 1u << battler;
+        if (sMoveCamera.targetMask & (1u << battler))
+            sMoveCamera.contactSeen = TRUE;
         sMoveCamera.age = 0;
     }
 }
@@ -1240,6 +1245,7 @@ void BattleCamera_OnSpriteCreated(u8 id, u16 tileTag)
     if (id >= MAX_SPRITES)
         return;
     sMoveCamera.effects[id / 32] &= ~(1u << (id % 32));
+    sMoveCamera.contactEffects[id / 32] &= ~(1u << (id % 32));
     if (!sMoveCamera.active)
         return;
     for (i = 0; i < MAX_BATTLERS_COUNT; i++)
@@ -1252,6 +1258,8 @@ void BattleCamera_OnSpriteCreated(u8 id, u16 tileTag)
         return;
     sMoveCamera.effects[id / 32] |= 1u << (id % 32);
     sMoveCamera.visualSeen = TRUE;
+    if (tileTag != 0xFFFF) // Hidden movement helpers are not contact graphics.
+        sMoveCamera.contactEffects[id / 32] |= 1u << (id % 32);
     if (tileTag == ANIM_TAG_IMPACT && !sMoveCamera.impactSeen && sMoveCamera.phase != CAMERA_PHASE_RETURN)
     {
         sMoveCamera.impactSeen = TRUE;
@@ -1315,6 +1323,33 @@ s16 BattleCamera_GetMonBgOffset(u8 bg, bool8 vertical)
             return value >= 256 ? value - 512 : value;
         }
     return 0;
+}
+
+// Called after AnimateSprites, before camera projection. Creation coordinates
+// and mere visual-task barriers are not evidence that a projectile has arrived.
+static void UpdateMoveContact(void)
+{
+    u32 id, battler;
+    if (sMoveCamera.contactSeen || sMoveCamera.phase == CAMERA_PHASE_RETURN)
+        return;
+    for (id = 0; id < MAX_SPRITES; id++)
+        if ((sMoveCamera.contactEffects[id / 32] & (1u << (id % 32)))
+            && gSprites[id].inUse && !gSprites[id].invisible)
+            for (battler = 0; battler < gBattlersCount; battler++)
+                if ((sMoveCamera.targetMask & sMoveCamera.actorMask & (1u << battler))
+                    && VisibleMoveBattler(battler))
+                {
+                    const struct Sprite *effect = &gSprites[id];
+                    const struct Sprite *target = &gSprites[sMoveCamera.actorSprite[battler]];
+                    s32 dx = effect->x + effect->x2 - target->x - target->x2;
+                    s32 dy = effect->y + effect->y2 - target->y - target->y2;
+                    if (dx >= -BATTLE_CAMERA_CONTACT_RADIUS_X && dx <= BATTLE_CAMERA_CONTACT_RADIUS_X
+                        && dy >= -BATTLE_CAMERA_CONTACT_RADIUS_Y && dy <= BATTLE_CAMERA_CONTACT_RADIUS_Y)
+                    {
+                        sMoveCamera.contactSeen = TRUE;
+                        return;
+                    }
+                }
 }
 
 static void UpdateImpactShake(void)
@@ -1387,15 +1422,25 @@ static bool32 UpdateMoveCamera(void)
                                 sMoveCamera.easing);
         sCamera.x = sCamera.startX + (sCamera.targetX - sCamera.startX) * weight / 256;
         sCamera.y = sCamera.startY + (sCamera.targetY - sCamera.startY) * weight / 256;
-        if (!sMoveCamera.generic)
-            sCamera.zoom = sCamera.startZoom + (sCamera.targetZoom - sCamera.startZoom) * weight / 256;
     }
-    if (sMoveCamera.generic && sMoveCamera.zoomElapsed < sMoveCamera.duration
-        && (sMoveCamera.visualSeen || sMoveCamera.phase == CAMERA_PHASE_RETURN
-            || sCamera.targetZoom <= sCamera.startZoom))
+    UpdateMoveContact();
+    if (sMoveCamera.contactSeen && sMoveCamera.phase != CAMERA_PHASE_RETURN
+        && sMoveCamera.profile != MOVE_CAMERA_GROUP && sMoveCamera.target < gBattlersCount
+        && sMoveCamera.focusMask != (1u << sMoveCamera.target))
     {
-        s32 weight = EasingWeight(++sMoveCamera.zoomElapsed, sMoveCamera.duration, sMoveCamera.easing);
-        sCamera.zoom = sCamera.startZoom + (sCamera.targetZoom - sCamera.startZoom) * weight / 256;
+        sMoveCamera.targetAcquired = TRUE;
+        sMoveCamera.phase = CAMERA_PHASE_TARGET_FOCUS;
+        SetMoveGoal(sMoveCamera.target, profile->travel, MoveZoom());
+    }
+    {
+        u16 zoomDuration = max(sMoveCamera.duration, BATTLE_CAMERA_CONTACT_ZOOM_TICKS);
+        if (sMoveCamera.zoomElapsed < zoomDuration
+            && (sMoveCamera.contactSeen || sMoveCamera.phase == CAMERA_PHASE_RETURN
+                || sCamera.targetZoom <= sCamera.startZoom))
+        {
+            s32 weight = EasingWeight(++sMoveCamera.zoomElapsed, zoomDuration, sMoveCamera.easing);
+            sCamera.zoom = sCamera.startZoom + (sCamera.targetZoom - sCamera.startZoom) * weight / 256;
+        }
     }
     UpdateImpactShake();
     if (sMoveCamera.elapsed == sMoveCamera.duration)

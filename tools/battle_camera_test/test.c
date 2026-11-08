@@ -833,6 +833,7 @@ static void TestMoveCamera(void)
     // Matrix exhaustion cancels the entire move, not only actor scaling.
     StartTestMove(MOVE_PECK, 0, 1, TARGET_SELECTED, gBattleAnimMove_Peck);
     sAllocated = 0xFFFFFFFE;
+    BattleCamera_OnHitReaction(1, TRUE);
     for (i = 0; i < 12; i++) Tick(0xFFFFFFFE);
     assert(!sMoveCamera.active && !sOwnsScanlines);
     sAllocated = 0;
@@ -960,17 +961,58 @@ static void TestMoveCamera(void)
         assert(!sMoveCamera.active && sCamera.x == 0);
     }
 
-    // Generic zoom starts with actual visuals, with no elapsed-time catch-up jump.
+    // Effect creation at the attacker is not target contact; arrival unlocks zoom.
     StartTestMove(MOVE_VINE_WHIP, 0, 1, TARGET_SELECTED, sGenericMoveScript);
     assert(sMoveCamera.generic && sCamera.targetZoom > 256);
     for (i = 0; i < 40; i++) Tick(0);
     assert(sCamera.zoom == 256);
-    BattleCamera_OnSpriteCreated(9, 0);
-    Tick(0);
-    assert(sCamera.zoom <= 257);
-    for (i = 0; i < 40; i++) Tick(0);
-    assert(sCamera.zoom > 256 && sMoveCamera.zoomElapsed == sMoveCamera.duration);
-    FinishTestMove();
+    {
+        struct Sprite saved = gSprites[9];
+        gSprites[9].inUse = TRUE;
+        gSprites[9].invisible = FALSE;
+        gSprites[9].x = gSprites[0].x; gSprites[9].y = gSprites[0].y;
+        gSprites[9].x2 = gSprites[9].y2 = 0;
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        BattleCamera_OnSpriteCreated(9, 0);
+        for (i = 0; i < 40; i++) Tick(0);
+        assert(!sMoveCamera.contactSeen && sCamera.zoom == 256);
+        gSprites[9].x = gSprites[1].x; gSprites[9].y = gSprites[1].y;
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+        Tick(0);
+        assert(sMoveCamera.contactSeen && sCamera.zoom <= 257);
+        for (i = 0; i < 40; i++) Tick(0);
+        assert(sCamera.zoom > 256 && sMoveCamera.zoomElapsed == sMoveCamera.duration);
+        FinishTestMove();
+        gSprites[9] = saved;
+        memcpy(sOriginal, gSprites, sizeof(sOriginal));
+    }
+    // Same strong budget for self, ally recipient and incoming near-side hits.
+    {
+        static const u16 moves[] = {MOVE_WITHDRAW, MOVE_HELPING_HAND, MOVE_PECK};
+        static const u8 attackers[] = {0, 0, 1};
+        static const u8 recipients[] = {0, 2, 0};
+        static const u8 types[] = {TARGET_USER, TARGET_ALLY, TARGET_SELECTED};
+        const u8 *scripts[] = {gBattleAnimMove_Withdraw, gBattleAnimMove_HelpingHand, gBattleAnimMove_Peck};
+        u32 n;
+        for (n = 0; n < 3; n++)
+        {
+            StartTestMove(moves[n], attackers[n], recipients[n], types[n], scripts[n]);
+            assert(sCamera.targetZoom > 256 && (sMoveCamera.targetMask & (1u << recipients[n])));
+            for (i = 0; i < 40; i++) Tick(0);
+            assert(!sMoveCamera.contactSeen && sCamera.zoom == 256);
+            if (n == 2)
+                BattleCamera_OnHitReaction(recipients[n], TRUE);
+            else
+                BattleCamera_OnAnimationLaunch(ANIM_TYPE_GENERAL, B_ANIM_STATS_CHANGE, recipients[n]);
+            Tick(0);
+            assert(sMoveCamera.contactSeen && sCamera.zoom <= 257);
+            for (i = 0; i < 40; i++) Tick(0);
+            assert(sCamera.zoom > 256);
+            if (n == 2)
+                BattleCamera_OnHitReaction(recipients[n], FALSE);
+            FinishTestMove();
+        }
+    }
     // Possible freeze reactions reserve1x so later monbg status cannot reset the shot.
     StartTestMove(MOVE_ICE_BEAM, 0, 1, TARGET_SELECTED, sGenericMoveScript);
     assert(sMoveCamera.translationOnly && sCamera.targetZoom == 256 && sCamera.targetY != 0);
@@ -1096,6 +1138,7 @@ static void TestMoveCamera(void)
         BattleCamera_OnHitReaction(1, FALSE);
         memcpy(sOriginal, gSprites, sizeof(sOriginal));
         gBattleControllerExecFlags = 0;
+        held.zoom = sCamera.zoom; // Contact has now acquired the stronger recipient zoom.
         BattleCamera_OnAnimationLaunch(ANIM_TYPE_GENERAL, B_ANIM_STATS_CHANGE, 1);
         gAnimScriptActive = TRUE;
         for (i = 0; i < 30; i++) Tick(0);

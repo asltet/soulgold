@@ -13,6 +13,9 @@
 #define BATTLE_CAMERA_CONTEXT_ZOOM_SHARE 64 // Q8: keep one quarter of extra zoom.
 #define BATTLE_CAMERA_CONTEXT_SHRINK 4     // Q8: mild quiet-background recession.
 #define BATTLE_CAMERA_CONTEXT_STEP 16
+#define BATTLE_CAMERA_CONTACT_ZOOM_TICKS 24 // Minimum smooth acquisition after contact.
+#define BATTLE_CAMERA_CONTACT_RADIUS_X 12 // Raw effect center near resolved recipient.
+#define BATTLE_CAMERA_CONTACT_RADIUS_Y 20
 #define BATTLE_CAMERA_VFX_MARGIN 24
 #define BATTLE_CAMERA_MOVE_ZOOM_DELTA 32 // Up to1.125x; target framing may request1.148x.
 #define BATTLE_CAMERA_HANDOFF_TICKS 16
