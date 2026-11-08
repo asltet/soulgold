@@ -30,6 +30,7 @@
 #include "constants/battle_anim.h"
 #include "constants/battle_partner.h"
 #include "data/battle_environment.h"
+#include "data/battle_background_stripes.h"
 
 // .rodata
 
@@ -677,6 +678,50 @@ static u8 GetBattleEnvironmentByMapScene(u8 mapBattleScene)
     return BATTLE_ENVIRONMENT_PLAIN;
 }
 
+// Remove the periodic bright scanlines in legacy abstract backdrops. These
+// exact word substitutions preserve platform detail and all palette variants.
+// Do this once after decompression; ordinary camera updates upload no tiles.
+static void RemoveBattleBackgroundStripes(const void *tileset)
+{
+    const struct BattleBackgroundStripePatch *patches;
+    u32 count, i;
+    volatile u16 *tiles = (volatile u16 *)BG_CHAR_ADDR(2);
+
+    if (tileset == gBattleEnvironmentTiles_Water)
+    {
+        patches = sStripePatchesWater;
+        count = ARRAY_COUNT(sStripePatchesWater);
+    }
+    else if (tileset == gBattleEnvironmentTiles_Building)
+    {
+        patches = sStripePatchesBuilding;
+        count = ARRAY_COUNT(sStripePatchesBuilding);
+    }
+    else if (tileset == gBattleEnvironmentTiles_Stadium)
+    {
+        patches = sStripePatchesStadium;
+        count = ARRAY_COUNT(sStripePatchesStadium);
+    }
+    else if (tileset == gBattleEnvironmentTiles_Rayquaza)
+    {
+        patches = sStripePatchesSky;
+        count = ARRAY_COUNT(sStripePatchesSky);
+    }
+    else if (tileset == gBattleEnvironmentTiles_Snow)
+    {
+        patches = sStripePatchesSnow;
+        count = ARRAY_COUNT(sStripePatchesSnow);
+    }
+    else
+        return;
+
+    // GBA VRAM requires halfword/word writes. Skip unexpected source words
+    // rather than corrupting a subsequently replaced/customized tileset.
+    for (i = 0; i < count; i++)
+        if (tiles[patches[i].offset] == patches[i].expected)
+            tiles[patches[i].offset] = patches[i].replacement;
+}
+
 // Loads the initial battle environment.
 static void LoadBattleEnvironmentGfx(u16 environment)
 {
@@ -684,6 +729,7 @@ static void LoadBattleEnvironmentGfx(u16 environment)
         environment = BATTLE_ENVIRONMENT_PLAIN;  // If higher than the number of entries in gBattleEnvironmentInfo, use the default.
     // Copy to bg3
     DecompressDataWithHeaderVram(gBattleEnvironmentInfo[environment].background.tileset, (void *)(BG_CHAR_ADDR(2)));
+    RemoveBattleBackgroundStripes(gBattleEnvironmentInfo[environment].background.tileset);
     DecompressDataWithHeaderVram(gBattleEnvironmentInfo[environment].background.tilemap, (void *)(BG_SCREEN_ADDR(26)));
     LoadPalette(gBattleEnvironmentInfo[environment].palette, BG_PLTT_ID(2), 3 * PLTT_SIZE_4BPP);
     TimeMixBattleBgPalette(FALSE);
@@ -1196,8 +1242,12 @@ bool8 LoadChosenBattleElement(u8 caseId)
         LoadPalette(gBattleTextboxPalette, BG_PLTT_ID(0), 2 * PLTT_SIZE_4BPP);
         break;
     case 3:
-        DecompressDataWithHeaderVram(gBattleEnvironmentInfo[GetBattleEnvironmentOverride()].background.tileset, (void *)(BG_CHAR_ADDR(2)));
+    {
+        const void *tileset = gBattleEnvironmentInfo[GetBattleEnvironmentOverride()].background.tileset;
+        DecompressDataWithHeaderVram(tileset, (void *)(BG_CHAR_ADDR(2)));
+        RemoveBattleBackgroundStripes(tileset);
         break;
+    }
     case 4:
         DecompressDataWithHeaderVram(gBattleEnvironmentInfo[GetBattleEnvironmentOverride()].background.tilemap, (void *)(BG_SCREEN_ADDR(26)));
         break;
