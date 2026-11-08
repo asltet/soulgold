@@ -40,7 +40,7 @@
 #define BATTLE_CAMERA_MAX_SHAKE_Y 1
 #define BATTLE_CAMERA_MAX_SHAKE_TICKS 12
 #define BATTLE_CAMERA_EASING BATTLE_CAMERA_EASING_SMOOTHSTEP // 0 = linear.
-#define BATTLE_CAMERA_WAIT_TICKS 900        // 15 seconds at nominal60 eligible updates/s.
+#define BATTLE_CAMERA_WAIT_TICKS 540        // 9 seconds at nominal60 eligible updates/s.
 
 // Q8 depth planes. Select 0 for restrained, 1 for cinematic (default).
 #ifndef BATTLE_CAMERA_DEPTH_PRESET

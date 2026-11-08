@@ -359,7 +359,7 @@ int main(void)
     TestDepthProjection();
     TestCinematicMath();
 
-    // BW2 normal threshold: 900 WAIT updates, then admission on the next one.
+    // Configured threshold: 540 WAIT updates, then admission on the next one.
     Ready();
     for (i = 0; i < BATTLE_CAMERA_WAIT_TICKS; i++)
     {
@@ -396,7 +396,7 @@ int main(void)
         assert(sCamera.x == 0 && sCamera.y == 0 && sCamera.zoom == 256);
         Tick(0);
         assert(!sCamera.active && !sOwnsScanlines && sWaitTicks == 0);
-        Tick(0); // No new 900-update wait between completed idle scripts.
+        Tick(0); // No new initial wait between completed idle scripts.
         assert(sCamera.active && sCamera.track != track);
     }
 
