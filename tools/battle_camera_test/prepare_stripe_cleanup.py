@@ -7,6 +7,7 @@ for a load-time graphics filter and analytical previews of its output.
 from pathlib import Path
 import argparse
 import struct
+from collections import deque
 from preview_backgrounds import read_png, render, write_png
 
 ASSETS = {
@@ -21,16 +22,65 @@ ASSETS = {
 def prepare(directory, stripe, ground):
     width, height, original, palette = read_png(directory / "tiles.png")
     pixels = [row[:] for row in original]
-    for y in range(height):
-        if y % 8 not in (0, 4):
+    # Classify in assembled scene space: tile-local vertical runs miss stripe
+    # ends where the next row is a curved platform outline. Flood only from
+    # the unobstructed top edge; side/bottom seeds could enter clipped platforms.
+    scene_width, scene_height = 512, 112
+    entries = struct.unpack('<2048H', (directory/'map.bin').read_bytes())
+    coordinates, scene = [], []
+    for y in range(scene_height):
+        for x in range(scene_width):
+            tx, ty = x//8, y//8
+            entry = entries[(tx//32)*1024 + ty*32 + tx % 32]
+            tile = entry & 1023
+            px, py = x % 8, y % 8
+            if entry & 1024: px = 7-px
+            if entry & 2048: py = 7-py
+            sx, sy = (tile % (width//8))*8+px, (tile//(width//8))*8+py
+            coordinates.append((sx, sy))
+            scene.append(original[sy][sx])
+    allowed = ground | {stripe}
+    reachable = set(i for i in range(scene_width) if scene[i] in allowed)
+    queue = deque(reachable)
+    while queue:
+        i = queue.popleft()
+        x, y = i % scene_width, i // scene_width
+        for nx, ny in ((x-1,y), (x+1,y), (x,y-1), (x,y+1)):
+            ni = ny*scene_width+nx
+            if 0 <= nx < scene_width and 0 <= ny < scene_height and ni not in reachable and scene[ni] in allowed:
+                reachable.add(ni)
+                queue.append(ni)
+    protected = {coordinates[i] for i in range(len(scene)) if i not in reachable}
+    replacements = {}
+    for i in sorted(reachable):
+        sx, sy = coordinates[i]
+        if scene[i] != stripe or sy % 8 not in (0, 4):
             continue
-        for x in range(width):
-            if original[y][x] == stripe and original[y+1][x] in ground:
-                # Require the entire adjacent three-row background run. This
-                # leaves outlined platform pixels and non-background detail.
-                color = original[y+1][x]
-                if all(original[y+n][x] == color for n in (1, 2, 3)):
-                    pixels[y][x] = color
+        assert (sx, sy) not in protected, ('Tile reused inside platform', directory, sx, sy)
+        x, y = i % scene_width, i // scene_width
+        candidates = []
+        for radius in range(1, 17):
+            for dx in range(-radius, radius+1):
+                dy = radius-abs(dx)
+                for ny in {y-dy, y+dy}:
+                    nx = x+dx
+                    ni = ny*scene_width+nx
+                    if 0 <= nx < scene_width and 0 <= ny < scene_height and ni in reachable and scene[ni] in ground:
+                        candidates.append(scene[ni])
+            if candidates:
+                break
+        assert candidates, ('No adjacent background tone', directory, x, y)
+        # A nearest connected background tone extends to the outside of the
+        # silhouette even where the adjacent vertical pixel is outline/art.
+        color = max(set(candidates), key=lambda c: (candidates.count(c), -c))
+        if (sx, sy) in replacements:
+            assert replacements[sx, sy] == color, ('Inconsistent tile reuse', directory, sx, sy)
+        replacements[sx, sy] = color
+    for (x, y), color in replacements.items():
+        pixels[y][x] = color
+    assert all(pixels[y][x] == original[y][x] for x, y in protected)
+    assert all(pixels[coordinates[i][1]][coordinates[i][0]] != stripe
+               for i in reachable if scene[i] == stripe and coordinates[i][1] % 8 in (0, 4))
     def pack(rows):
         data = bytearray()
         for ty in range(0, height, 8):
