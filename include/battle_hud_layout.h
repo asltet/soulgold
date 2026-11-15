@@ -7,24 +7,24 @@
 #endif
 
 #define COMPACT_HUD_WIDTH 128
-#define COMPACT_HUD_PLAYER_HEIGHT 28
-#define COMPACT_HUD_DOUBLE_HEIGHT 28
-#define COMPACT_HUD_OTHER_HEIGHT 24
-#define COMPACT_HUD_NAME_X 4
-#define COMPACT_HUD_NAME_Y 0
-#define COMPACT_HUD_NAME_WIDTH 80
-#define COMPACT_HUD_GENDER_X 92
+#define COMPACT_HUD_PLAYER_HEIGHT 32
+#define COMPACT_HUD_DOUBLE_HEIGHT 32
+#define COMPACT_HUD_OTHER_HEIGHT 28
+#define COMPACT_HUD_NAME_X 10
+#define COMPACT_HUD_NAME_Y 3
+#define COMPACT_HUD_NAME_WIDTH 62
+#define COMPACT_HUD_GENDER_X 72
 #define COMPACT_HUD_GENDER_WIDTH 8
-#define COMPACT_HUD_LEVEL_RIGHT 124
-#define COMPACT_HUD_LEVEL_Y 0
-#define COMPACT_HUD_BAR_X 24
-#define COMPACT_HUD_BAR_Y 13
-#define COMPACT_HUD_HP_FILL_X 40
+#define COMPACT_HUD_LEVEL_RIGHT 112
+#define COMPACT_HUD_LEVEL_Y 4
+#define COMPACT_HUD_BAR_X 40
+#define COMPACT_HUD_BAR_Y 17
+#define COMPACT_HUD_HP_FILL_X 56
 #define COMPACT_HUD_HP_FILL_WIDTH 48
-#define COMPACT_HUD_HP_TEXT_X 32
-#define COMPACT_HUD_HP_TEXT_WIDTH 64
-#define COMPACT_HUD_HP_TEXT_Y 18
-#define COMPACT_HUD_PLATE_TOP 13
+#define COMPACT_HUD_HP_TEXT_X 48
+#define COMPACT_HUD_HP_TEXT_WIDTH 72
+#define COMPACT_HUD_HP_TEXT_Y 22
+#define COMPACT_HUD_PLATE_TOP 17
 #define COMPACT_HUD_STATUS_TILE 16 // Separate badge at X0/Y16.
 
 static inline u32 CompactHudHeight(bool32 player, bool32 doubles)
@@ -35,26 +35,35 @@ static inline u32 CompactHudHeight(bool32 player, bool32 doubles)
 static inline void CompactHudGetCoords(bool32 player, bool32 doubles, bool32 right, s16 *x, s16 *y)
 {
     *x = player ? 144 : 34;
-    *y = player ? (doubles ? (right ? 100 : 72) : 100) : (doubles && right ? 44 : 20);
+    *y = player ? (doubles ? (right ? 96 : 64) : 96) : (doubles && right ? 48 : 20);
 }
 
 // Existing player-single sheets contain two64x64 halves, not a linear128px
-// tile row. Use row3 for the centered64px EXP lane at logical X32/Y24.
+// tile row. Use row3 for the centered64px EXP lane at logical X40/Y28 (four-row inset within tile row3).
 static inline u32 CompactHudExpTileOffset(u32 tile)
 {
-    return tile < 4 ? 28 + tile : 88 + tile - 4;
+    return tile < 3 ? 29 + tile : 88 + tile - 3;
 }
 
-// Keep the hardware bar sprite eight pixels high, but use five visible rows
-// so its native-size BW2 plate can fit HP, compact digits and EXP vertically.
-static inline void CompactHudMakeHpTile(u32 *dest, const u32 *source)
+// Side-specific local offsets recovered from BW2's text writes and cell data.
+static inline u32 CompactHudSideOffset(bool32 player) { return player ? 0 : 8; }
+static inline u32 CompactHudHpFillX(bool32 player) { return COMPACT_HUD_HP_FILL_X - CompactHudSideOffset(player); }
+static inline u32 CompactHudGenderX(bool32 player) { return COMPACT_HUD_GENDER_X + CompactHudSideOffset(player); }
+static inline u32 CompactHudLevelX(bool32 player) { return 88 + CompactHudSideOffset(player); }
+static inline u32 CompactHudNameX(bool32 player, u32 width) { return (width > 48 ? 10 : 16) + CompactHudSideOffset(player); }
+
+// BW2 keeps the slash in a fixed tile, current HP right-aligned before it,
+// and max HP left-aligned after it. Compact only four-digit GBA values.
+static inline u32 CompactHudHpDigitX(u32 currentCount, u32 maxCount, u32 index)
 {
-    dest[0] = source[1];
-    dest[1] = source[3];
-    dest[2] = source[4];
-    dest[3] = source[5];
-    dest[4] = source[7];
-    dest[5] = dest[6] = dest[7] = 0;
+    if (index < currentCount)
+    {
+        u32 step = currentCount > 3 ? 7 : 8;
+        return 80 - currentCount * step + index * step;
+    }
+    if (index == currentCount)
+        return 80;
+    return 88 + (index - currentCount - 1) * (maxCount > 3 ? 7 : 8);
 }
 
 #endif

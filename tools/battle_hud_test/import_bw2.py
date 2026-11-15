@@ -34,22 +34,12 @@ def cell(directory, number):
 
 def convert(directory):
     frames = []
-    # Keep the native body outline. Clear baked labels to their row's tone;
-    # the GBA draws those fields separately. Reuse its existing HUD palette.
-    remap = {0:0, 2:4, 13:2, 3:2, 15:3, 1:1, 14:1, 11:9, 12:11}
+    # Preserve the original plate AND its baked HP/EXP/Lv artwork.
+    # Keep source positions within the native128x32 cell canvas.
+    remap = {0:0,2:4,13:2,3:2,15:3,1:1,14:3,11:11,12:9,9:7,10:8}
     for number in (435,438):
         original = cell(directory, number)
-        image = [[0]*128 for _ in range(32)]
-        end = 28 if number == 435 else 32
-        for sy in range(17,end):
-            row = original[sy]
-            tone = next(iter(collections.Counter(v for v in row if v in (13,3,15)).most_common(1)), (2,0))[0]
-            for x,value in enumerate(row):
-                if value in (1,14,11,12):
-                    value = tone
-                image[sy-4][x] = remap[value]
-            assert [bool(v) for v in row] == [bool(v) for v in image[sy-4]]
-        frames.append(image)
+        frames.append([[remap[v] for v in row] for row in original])
     source = tiles(directory / '434.png')
     slash = cell(directory, 456)
     glyphs = []
@@ -66,12 +56,12 @@ def bars(directory):
     # slots preserve its own effects/themes; only pixel indices are converted.
     hp_map = {0:0,2:8,14:1,1:3,5:11,6:10,9:12,10:13,7:14,8:15}
     exp_map = {0:0,2:1,14:3,1:3,11:11,12:9}
-    def pack(offset, rows, mapping):
+    def pack(offset, rows, mapping, top=0):
         pixels = source[offset*2:offset*2+64]
         result = [sum(mapping[pixels[y*8+x]] << (4*x) for x in range(8)) for y in rows]
-        return result + [0]*(8-len(result))
+        return [0]*top + result + [0]*(8-top-len(result))
     hp = [[pack(base+fill*32,range(2,7),hp_map) for fill in range(9)] for base in (0,0x120,0x240)]
-    exp = [pack(0x400+fill*32,range(1,5),exp_map) for fill in range(9)]
+    exp = [pack(0x400+fill*32,range(1,5),exp_map,4) for fill in range(9)]
     # End caps are ordinary opaque border columns in the original cells.
     for number,rows in ((447,range(2,7)),(453,range(1,5))):
         image=cell(directory,number)

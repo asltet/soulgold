@@ -43,19 +43,20 @@ def check():
     mapping,fonts=load()
     h=Path('include/battle_hud_layout.h').read_text()
     c={m[1]:int(m[2]) for m in re.finditer(r'#define\s+(COMPACT_HUD_\w+)\s+(\d+)\b',h)}
-    for word in ['CHARIZARD','gypqjgypsy','WWWWWWWWWW','iiiiiiiiii']:
-        font=fit(mapping,fonts,word,c['COMPACT_HUD_NAME_WIDTH'])
-        assert measure(mapping,font,word)<=c['COMPACT_HUD_NAME_WIDTH']
-        for x,y,_ in ink(mapping,font,word,c['COMPACT_HUD_NAME_X'],0):assert x<84 and y<13
-    for word in ['\u2642','\u2640']:
-        assert measure(mapping,fonts[0],word)<=c['COMPACT_HUD_GENDER_WIDTH']
-        for x,y,_ in ink(mapping,fonts[0],word,c['COMPACT_HUD_GENDER_X'],0):assert 92<=x<100 and y<13
-    for level in (1,9,10,99,100,255):
-        text='\x01'+str(level)
-        width=measure(mapping,fonts[0],text)
-        assert width<=24
-        for x,y,_ in ink(mapping,fonts[0],text,c['COMPACT_HUD_LEVEL_RIGHT']-width,c['COMPACT_HUD_LEVEL_Y']):
-            assert x>=100 and y<13
+    for side in (0,8):
+        for word in ['CHARIZARD','gypqjgypsy','WWWWWWWWWW','iiiiiiiiii']:
+            font=fit(mapping,fonts,word,c['COMPACT_HUD_NAME_WIDTH'])
+            width=measure(mapping,font,word)
+            assert width<=c['COMPACT_HUD_NAME_WIDTH']
+            left=(10 if width>48 else 16)+side
+            for x,y,_ in ink(mapping,font,word,left,c['COMPACT_HUD_NAME_Y']):assert x<72+side and y<16
+        for word in ['\u2642','\u2640']:
+            assert measure(mapping,fonts[0],word)<=c['COMPACT_HUD_GENDER_WIDTH']
+            for x,y,_ in ink(mapping,fonts[0],word,72+side,c['COMPACT_HUD_NAME_Y']):assert 72+side<=x<80+side and y<16
+        for level in (1,9,10,99,100,255):
+            text=str(level)
+            assert measure(mapping,fonts[0],text)<=24
+            for x,y,_ in ink(mapping,fonts[0],text,88+side,c['COMPACT_HUD_LEVEL_Y']):assert 88+side<=x<112+side and y<16
     print('PASS: floating name, separate gender and level source glyphs fit their lanes')
 
 

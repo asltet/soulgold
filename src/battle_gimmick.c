@@ -367,6 +367,8 @@ void UpdateIndicatorLevelData(u32 healthboxId, u32 level)
     else if (level < 10)
         xDelta += 5;
 
+    if (B_COMPACT_BATTLE_HUD && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && IsOnPlayerSide(gSprites[healthboxId].hMain_Battler)))
+        xDelta = 0;
     gSprites[GetIndicatorSpriteId(healthboxId)].tLevelXDelta = xDelta;
 }
 
@@ -391,8 +393,8 @@ void CreateIndicatorSprite(enum BattlerId battler)
     y += sIndicatorPositions[position][1];
     if (B_COMPACT_BATTLE_HUD && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && IsOnPlayerSide(battler)))
     {
-        x += IsOnPlayerSide(battler) ? 28 : 36;
-        y -= 3;
+        x = IsOnPlayerSide(battler) ? 52 : 60;
+        y += 5;
     }
 
     LoadSpriteSheet(&sBattler_GimmickSpritesheets[battler]);

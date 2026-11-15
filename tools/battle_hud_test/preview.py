@@ -41,16 +41,22 @@ def card(player,compact):
         for px,py,color in ink(mapping,font,text,x,y):
             if 0<=px<width and 0<=py<height:image[py][px]=pal[(2 if color==1 else 1) if header else (1 if color==1 else 3)]
     nickname='CHARIZARD' if player else 'GENGAR'
-    label(nickname,constants['COMPACT_HUD_NAME_X'] if compact else 16 if player else 8,0 if compact else 3,
-          constants['COMPACT_HUD_NAME_WIDTH'] if compact else 55,header=compact)
-    if compact:label('\u2642',constants['COMPACT_HUD_GENDER_X'],0,8,header=True)
-    level='\x01'+'100'
-    right=constants['COMPACT_HUD_LEVEL_RIGHT'] if compact else 96 if player else 88
-    label(level,right-measure(mapping,fonts[0],level),constants['COMPACT_HUD_LEVEL_Y'] if compact else 3,24,header=compact)
+    side=0 if player else 8
+    if compact:
+        font=fit(mapping,fonts,nickname,constants['COMPACT_HUD_NAME_WIDTH'])
+        nx=(10 if measure(mapping,font,nickname)>48 else 16)+side
+        label(nickname,nx,constants['COMPACT_HUD_NAME_Y'],constants['COMPACT_HUD_NAME_WIDTH'],header=True)
+        label('\u2642',72+side,constants['COMPACT_HUD_NAME_Y'],8,header=True)
+        label('100',88+side,constants['COMPACT_HUD_LEVEL_Y'],24,header=True)
+    else:
+        label(nickname,16 if player else 8,3,55)
+        level='\x01'+'100'
+        label(level,(96 if player else 88)-measure(mapping,fonts[0],level),3,24)
     _,_,bar,bpal=read_png(Path('graphics/battle_interface/hpbar.png'))
     slots=[1,2]+[3+max(0,min(8,31-i*8)) for i in range(6)]
-    bx=constants['COMPACT_HUD_BAR_X'] if compact else 32 if player else 24
+    bx=constants['COMPACT_HUD_BAR_X']-side if compact else 32 if player else 24
     for i,tile in enumerate(slots):
+        if compact and i<2:continue
         rows=([1,2,3,4,5] if i<2 else [1,3,4,5,7]) if compact else range(8)
         for y,sy in enumerate(rows):
             for x in range(8):
@@ -59,11 +65,11 @@ def card(player,compact):
     if player:
         if compact:
             text='63/100'
-            left=(width-(len(text)-1)*7-8)//2
             for i,c in enumerate(text):
+                left=64+i*8
                 for y,row in enumerate(digit_ink[10 if c=='/' else int(c)]):
                     for x,value in enumerate(row):
-                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+i*7+x]=pal[1 if value==1 else 3]
+                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+x]=pal[1 if value==1 else 3]
         else:
             text='  63/100'
             font=fit(mapping,fonts,text,56)
@@ -74,14 +80,14 @@ def card(player,compact):
             rows=(2,3,4,5) if compact else range(8)
             for y,sy in enumerate(rows):
                 for x in range(8):
-                    color=((exp_tiles[fill][y]>>(4*x))&15) if compact else exp[sy][fill*8+x]
-                    if color:image[(24 if compact else 32)+y][32+i*8+x]=epal[color]
+                    color=((exp_tiles[fill][y+4]>>(4*x))&15) if compact else exp[sy][fill*8+x]
+                    if color:image[(28 if compact else 32)+y][(40 if compact else 32)+i*8+x]=epal[color]
     if compact:
-        for x in (39,88):
-            for y in range(13,18):image[y][x]=pal[1]
+        for x in (55-side,104-side):
+            for y in range(17,22):image[y][x]=pal[1]
         if player:
-            for x in (31,96):
-                for y in range(24,28):image[y][x]=pal[1]
+            for x in (39,104):
+                for y in range(28,32):image[y][x]=pal[1]
     return image
 
 
@@ -90,7 +96,7 @@ for compact in (False,True):
     base=Path('graphics/battle_environment/plain')
     image=render(base,base/'map.bin',width=240,height=112)+[[(32,40,48)]*240 for _ in range(48)]
     for player in (False,True):
-        cx,cy=(144,100) if compact and player else (34,20) if compact else (168,88) if player else (34,30)
+        cx,cy=(144,96) if compact and player else (34,20) if compact else (168,88) if player else (34,30)
         panel=card(player,compact)
         for y,row in enumerate(panel):
             for x,color in enumerate(row):

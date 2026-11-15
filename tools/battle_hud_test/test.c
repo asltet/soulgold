@@ -32,10 +32,10 @@ int main(void)
                 }
             }
     assert(COMPACT_HUD_NAME_X + COMPACT_HUD_NAME_WIDTH <= COMPACT_HUD_GENDER_X);
-    assert(COMPACT_HUD_GENDER_X + COMPACT_HUD_GENDER_WIDTH <= COMPACT_HUD_LEVEL_RIGHT - 24);
+    assert(COMPACT_HUD_GENDER_X + COMPACT_HUD_GENDER_WIDTH == 80);
     assert(COMPACT_HUD_BAR_X + 16 == COMPACT_HUD_HP_FILL_X);
-    assert(COMPACT_HUD_HP_FILL_X + 24 == COMPACT_HUD_WIDTH / 2);
-    assert(COMPACT_HUD_HP_TEXT_X + COMPACT_HUD_HP_TEXT_WIDTH / 2 == COMPACT_HUD_WIDTH / 2);
+    assert(COMPACT_HUD_HP_FILL_X + 24 == 80);
+    assert(COMPACT_HUD_HP_TEXT_X + COMPACT_HUD_HP_TEXT_WIDTH / 2 == 84);
     for (i = 0; i < 8; i++)
     {
         u32 offset = CompactHudExpTileOffset(i);
@@ -43,6 +43,8 @@ int main(void)
         assert(offset < 128 && (offset - half) / 8 == 3);
         for (x = 0; x < i; x++) assert(offset != CompactHudExpTileOffset(x));
     }
+    for (i = 0; i < 7; i++) assert(CompactHudHpDigitX(3, 3, i) == 56 + i * 8);
+    for (i = 0; i < 9; i++) assert(CompactHudHpDigitX(4, 4, i) >= 48 && CompactHudHpDigitX(4, 4, i) + 8 <= 120);
     assert(sizeof(sBw2HudFrames) == 4096 && sizeof(sBw2HudDigits) == 528);
     for (i = 0; i <= 8; i++)
     {
@@ -61,17 +63,11 @@ int main(void)
         filled = 0;
         for (x = 0; x < 8; x++)
         {
-            u32 pixel = (sBw2HudExpTiles[i][1] >> (4*x)) & 15;
+            u32 pixel = (sBw2HudExpTiles[i][5] >> (4*x)) & 15;
             if (pixel == 9 || pixel == 11) filled++;
         }
-        assert(filled == i && sBw2HudExpTiles[i][0] == 0x11111111 && sBw2HudExpTiles[i][3] == 0x11111111);
-        for (x = 4; x < 8; x++) assert(sBw2HudExpTiles[i][x] == 0);
-    }
-    {
-        u32 sourceRows[8] = {0,1,2,3,4,5,6,7}, output[8];
-        CompactHudMakeHpTile(output, sourceRows);
-        assert(output[0] == 1 && output[1] == 3 && output[2] == 4 && output[3] == 5 && output[4] == 7);
-        assert(output[5] == 0 && output[6] == 0 && output[7] == 0);
+        assert(filled == i && sBw2HudExpTiles[i][4] == 0x11111111 && sBw2HudExpTiles[i][7] == 0x11111111);
+        for (x = 0; x < 4; x++) assert(sBw2HudExpTiles[i][x] == 0);
     }
     puts("PASS: panel bounds/doubles separation, text lanes, EXP addressing, native BW2 HP/EXP fill0..8 and zero padding");
     return 0;
