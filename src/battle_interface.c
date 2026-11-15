@@ -709,6 +709,26 @@ static void PaintCompactHealthboxRegion(u32 spriteId, u32 x, u32 top, u32 width,
             FillCompactHealthboxRect(spriteId, start, y, px - start, 1, color);
         }
     }
+    // Native DS frame end caps: one opaque column beside each fill lane.
+    // Clip to the repaint rectangle and follow numeric-only visibility.
+    for (u32 bar = 0; bar < 2; bar++)
+    {
+        if (bar == 0 && gBattleSpritesDataPtr->battlerData[battler].hpNumbersNoBars)
+            continue;
+        if (bar == 1 && (!IsOnPlayerSide(battler) || GetBattlerCoordsIndex(battler) != BATTLE_COORDS_SINGLES))
+            continue;
+        u32 capY = bar ? 24 : COMPACT_HUD_BAR_Y;
+        u32 capHeight = bar ? 4 : 5;
+        u32 left = bar ? 31 : COMPACT_HUD_HP_FILL_X - 1;
+        u32 right = bar ? 96 : COMPACT_HUD_HP_FILL_X + COMPACT_HUD_HP_FILL_WIDTH;
+        for (u32 side = 0; side < 2; side++)
+        {
+            u32 capX = side ? right : left;
+            u32 start = max(top, capY), end = min(top + rows, capY + capHeight);
+            if (capX >= x && capX < x + width && start < end)
+                FillCompactHealthboxRect(spriteId, capX, start, 1, end - start, 1);
+        }
+    }
     gSprites[spriteId].data[1] = savedMain;
     gSprites[other].data[1] = savedOther;
 }
@@ -1140,6 +1160,10 @@ static void UpdateHealthbarGfxStyle(u8 healthboxSpriteId, bool8 toDark)
     u32 size = IsOnPlayerSide(battler) ? 0x100 : 0x120;
     void *gfx = (void *)(OBJ_VRAM0 + gSprites[healthbarSpriteId].oam.tileNum * TILE_SIZE_4BPP);
 
+    // Imported fill tiles already use stable bar-palette slots. Theme changes
+    // should recolor only the old HP label, not reinterpret the DS fill pixels.
+    if (IsCompactHealthbox(healthboxSpriteId))
+        size = 64;
     CopyHealthbarGfxWithStyle(gfx, gfx, size, toDark);
 }
 
@@ -1518,6 +1542,8 @@ void SwapHpBarsWithHpText(void)
             {
                 healthBarSpriteId = gSprites[gHealthboxSpriteIds[i]].hMain_HealthBarSpriteId;
                 gBattleSpritesDataPtr->battlerData[i].hpNumbersNoBars ^= 1;
+                PaintCompactHealthboxRegion(gHealthboxSpriteIds[i], COMPACT_HUD_HP_FILL_X - 1,
+                                            COMPACT_HUD_BAR_Y, COMPACT_HUD_HP_FILL_WIDTH + 2, 5);
                 if (gBattleSpritesDataPtr->battlerData[i].hpNumbersNoBars)
                     CpuFill32(0, (void *)(OBJ_VRAM0 + gSprites[healthBarSpriteId].oam.tileNum * TILE_SIZE_4BPP), 0x100);
                 else
@@ -2548,6 +2574,13 @@ static void MoveBattleBarGraphically(enum BattlerId battler, u8 whichBar)
         {
             u8 healthboxSpriteId = gBattleSpritesDataPtr->battleBars[battler].healthboxSpriteId;
             u8 healthbarSpriteId = gSprites[healthboxSpriteId].hMain_HealthBarSpriteId;
+            if (IsCompactHealthbox(healthboxSpriteId))
+            {
+                u32 color = barElementId == HEALTHBOX_GFX_HP_BAR_GREEN ? 0 : barElementId == HEALTHBOX_GFX_HP_BAR_YELLOW ? 1 : 2;
+                CpuCopy32(sBw2HudHpTiles[color][array[i]],
+                          (void *)(OBJ_VRAM0 + (gSprites[healthbarSpriteId].oam.tileNum + 2 + i) * TILE_SIZE_4BPP), TILE_SIZE_4BPP);
+                continue;
+            }
             if (i < 2)
                 CopyHealthbarGfx(healthboxSpriteId,
                                  GetHealthboxElementGfxPtr(barElementId) + array[i] * 32,
@@ -2581,11 +2614,8 @@ static void MoveBattleBarGraphically(enum BattlerId battler, u8 whichBar)
                 // Doubles/opponent sheets have only64 tiles; EXP is singles-only.
                 if (IsDoubleBattle() || !IsOnPlayerSide(battler))
                     continue;
-                u32 tile[8];
-                const u32 *source = (const u32 *)(GetHealthboxElementGfxPtr(HEALTHBOX_GFX_12) + array[i] * TILE_SIZE_4BPP);
-                CompactHudMakeExpTile(tile, source);
-                CpuCopy32(tile, (void *)(OBJ_VRAM0
-                    + (gSprites[healthboxSpriteId].oam.tileNum + CompactHudExpTileOffset(i)) * TILE_SIZE_4BPP), sizeof(tile));
+                CpuCopy32(sBw2HudExpTiles[array[i]], (void *)(OBJ_VRAM0
+                    + (gSprites[healthboxSpriteId].oam.tileNum + CompactHudExpTileOffset(i)) * TILE_SIZE_4BPP), TILE_SIZE_4BPP);
                 continue;
             }
             if (i < 4)

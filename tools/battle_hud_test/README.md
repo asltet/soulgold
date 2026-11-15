@@ -18,3 +18,5 @@ python tools/battle_hud_test/import_bw2.py ../pokebw2
 Original outline pixels are retained unscaled. Baked labels are cleared and colors mapped to existing GBA theme slots. Five-row HP, six-row original digit ink and four-row EXP fit the15px player plate. HP remains48 steps; EXP64 and singles-only. No extra sprites, affine matrices, palettes or sheets. Set B_COMPACT_BATTLE_HUD FALSE for the stock layout.
 
 Manual emulator tests: singles/doubles/Safari, long names/gender/levels, HP0/1/four digits/damage/healing, EXP/levels, statuses/cure, dark/shiny/gimmick/caught icons, numeric toggle, party/bag restoration, hide/slide/shake, switching/fainting, normal/accelerated speed and camera HP-action hold. Inspect native plate ends and compact text/bar rows. Native/compile success does not imply runtime acceptance.
+
+The latest importer also ports all27 original HP fill tiles and nine striped EXP tiles. Native/offline checks validate source-word equality, fill0..8, borders and end caps. Existing GBA palettes and48/64px bar lengths remain. The old HP label remains local artwork.

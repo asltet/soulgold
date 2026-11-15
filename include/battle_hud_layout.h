@@ -20,6 +20,7 @@
 #define COMPACT_HUD_BAR_X 24
 #define COMPACT_HUD_BAR_Y 13
 #define COMPACT_HUD_HP_FILL_X 40
+#define COMPACT_HUD_HP_FILL_WIDTH 48
 #define COMPACT_HUD_HP_TEXT_X 32
 #define COMPACT_HUD_HP_TEXT_WIDTH 64
 #define COMPACT_HUD_HP_TEXT_Y 18
@@ -43,16 +44,6 @@ static inline u32 CompactHudExpTileOffset(u32 tile)
 {
     return tile < 4 ? 28 + tile : 88 + tile - 4;
 }
-
-static inline void CompactHudMakeExpTile(u32 *dest, const u32 *source)
-{
-    dest[0] = source[2];
-    dest[1] = source[3];
-    dest[2] = source[4];
-    dest[3] = source[5];
-    dest[4] = dest[5] = dest[6] = dest[7] = 0;
-}
-
 
 // Keep the hardware bar sprite eight pixels high, but use five visible rows
 // so its native-size BW2 plate can fit HP, compact digits and EXP vertically.

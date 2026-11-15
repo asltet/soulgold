@@ -10,8 +10,9 @@ import sys
 sys.path.insert(0, str(Path('tools/battle_camera_test').resolve()))
 from preview_backgrounds import read_png, write_png, render
 from font_bounds import load, fit, measure, ink
-from import_bw2 import convert
+from import_bw2 import convert,bars
 frames,digit_ink=convert(Path("graphics/battle_interface/bw2_original"))
+hp_tiles,exp_tiles=bars(Path("graphics/battle_interface/bw2_original"))
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output',type=Path,required=True)
@@ -53,7 +54,7 @@ def card(player,compact):
         rows=([1,2,3,4,5] if i<2 else [1,3,4,5,7]) if compact else range(8)
         for y,sy in enumerate(rows):
             for x in range(8):
-                color=bar[sy][tile*8+x]
+                color=((hp_tiles[0][max(0,min(8,31-(i-2)*8))][y]>>(4*x))&15) if compact and i>=2 else bar[sy][tile*8+x]
                 if color and bx+i*8+x<width:image[(constants['COMPACT_HUD_BAR_Y'] if compact else 16)+y][bx+i*8+x]=bpal[color]
     if player:
         if compact:
@@ -73,8 +74,14 @@ def card(player,compact):
             rows=(2,3,4,5) if compact else range(8)
             for y,sy in enumerate(rows):
                 for x in range(8):
-                    color=exp[sy][fill*8+x]
+                    color=((exp_tiles[fill][y]>>(4*x))&15) if compact else exp[sy][fill*8+x]
                     if color:image[(24 if compact else 32)+y][32+i*8+x]=epal[color]
+    if compact:
+        for x in (39,88):
+            for y in range(13,18):image[y][x]=pal[1]
+        if player:
+            for x in (31,96):
+                for y in range(24,28):image[y][x]=pal[1]
     return image
 
 
