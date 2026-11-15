@@ -1,4 +1,5 @@
 #include "global.h"
+#include "battle_hud_layout.h"
 #include "battle.h"
 #include "battle_anim.h"
 #include "battle_controllers.h"
@@ -388,6 +389,11 @@ void CreateIndicatorSprite(enum BattlerId battler)
 
     x = sIndicatorPositions[position][0];
     y += sIndicatorPositions[position][1];
+    if (B_COMPACT_BATTLE_HUD && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && IsOnPlayerSide(battler)))
+    {
+        x += IsOnPlayerSide(battler) ? 4 : 12;
+        y--;
+    }
 
     LoadSpriteSheet(&sBattler_GimmickSpritesheets[battler]);
     spriteId = CreateSprite(&(sSpriteTemplate_BattlerIndicators[battler]), 0, y, 0);

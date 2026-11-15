@@ -7,6 +7,12 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import argparse
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--classic-hud', action='store_true', help='Also validate the stock HUD configuration')
+args = parser.parse_args()
+defines = ['-DB_COMPACT_BATTLE_HUD=0'] if args.classic_hud else []
 
 suffix = ".exe" if os.name == "nt" else ""
 gcc = shutil.which("arm-none-eabi-gcc")
@@ -19,10 +25,10 @@ flags = ["-mthumb", "-mthumb-interwork", "-O2", "-mabi=apcs-gnu", "-mtune=arm7td
          "-Wno-strict-aliasing", "-Wno-attribute-alias", "-Woverride-init", "-Wnonnull",
          "-Wenum-conversion", "-Wno-error=unused-const-variable"]
 Path("build").mkdir(exist_ok=True)
-for name in ("battle_camera", "battle_main", "reshow_battle_screen", "battle_bg", "scanline_effect", "battle_anim", "battle_controllers", "sprite"):
+for name in ("battle_camera", "battle_main", "reshow_battle_screen", "battle_bg", "scanline_effect", "battle_anim", "battle_controllers", "sprite", "battle_interface", "battle_gimmick"):
     src = f"src/{name}.c"
     cpp = subprocess.run([gcc, "-E", "-iquote", "include", "-DMODERN=1", "-DTESTING=0",
-                          "-DEMERALD", "-std=gnu17", src], capture_output=True, check=True)
+                          "-DEMERALD", "-std=gnu17", *defines, src], capture_output=True, check=True)
     pre = subprocess.run(["tools/preproc/preproc" + suffix, "-i", src, "charmap.txt"],
                          input=cpp.stdout, capture_output=True, check=True)
     output = Path("build") / f"{name}-prototype.i"
