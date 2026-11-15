@@ -26,38 +26,39 @@ def card(player,compact):
     width=constants['COMPACT_HUD_WIDTH'] if compact else w
     image=[[None]*width for _ in range(height)]
     if compact:
-        image=[[pal[4] if x in (0,width-1) or y in (0,height-1) else pal[6] if y==1 else pal[2]
-                for x in range(width)] for y in range(height)]
-        for y in range(8,16):
-            for x in range(24):image[y][x]=pal[2]
+        for y in range(constants['COMPACT_HUD_PLATE_TOP'],height):
+            left=20-(y-constants['COMPACT_HUD_PLATE_TOP'])//3
+            for x in range(left,width-left):
+                image[y][x]=pal[4 if y in (constants['COMPACT_HUD_PLATE_TOP'],height-1) or x in (left,width-left-1) else 2]
     else:
         for y in range(h):
             for x in range(w):
                 if p[y][x]:image[y][x]=pal[p[y][x]]
-    def label(text,x,y,limit):
+    def label(text,x,y,limit,header=False):
         font=fit(mapping,fonts,text,limit)
         for px,py,color in ink(mapping,font,text,x,y):
-            if 0<=px<width and 0<=py<height:image[py][px]=pal[1 if color==1 else 3]
+            if 0<=px<width and 0<=py<height:image[py][px]=pal[(2 if color==1 else 1) if header else (1 if color==1 else 3)]
     nickname='CHARIZARD' if player else 'GENGAR'
-    label(nickname,constants['COMPACT_HUD_NAME_X'] if compact else 16 if player else 8,3,
-          constants['COMPACT_HUD_NAME_WIDTH'] if compact else 55)
+    label(nickname,constants['COMPACT_HUD_NAME_X'] if compact else 16 if player else 8,0 if compact else 3,
+          constants['COMPACT_HUD_NAME_WIDTH'] if compact else 55,header=compact)
+    if compact:label('\u2642',constants['COMPACT_HUD_GENDER_X'],0,8,header=True)
     level='\x01'+'100'
     right=constants['COMPACT_HUD_LEVEL_RIGHT'] if compact else 96 if player else 88
-    label(level,right-measure(mapping,fonts[0],level),constants['COMPACT_HUD_LEVEL_Y'] if compact else 3,24)
+    label(level,right-measure(mapping,fonts[0],level),constants['COMPACT_HUD_LEVEL_Y'] if compact else 3,24,header=compact)
     _,_,bar,bpal=read_png(Path('graphics/battle_interface/hpbar.png'))
     slots=[1,2]+[3+max(0,min(8,31-i*8)) for i in range(6)]
-    bx=0 if compact else 32 if player else 24
+    bx=constants['COMPACT_HUD_BAR_X'] if compact else 32 if player else 24
     for i,tile in enumerate(slots):
         for y in range(8):
             for x in range(8):
                 color=bar[y][tile*8+x]
-                if color and bx+i*8+x<width:image[16+y][bx+i*8+x]=bpal[color]
+                if color and bx+i*8+x<width:image[(constants['COMPACT_HUD_BAR_Y'] if compact else 16)+y][bx+i*8+x]=bpal[color]
     if player:
-        text='  63/100'
+        text='63/100' if compact else '  63/100'
         limit=constants['COMPACT_HUD_HP_TEXT_WIDTH'] if compact else 56
         font=fit(mapping,fonts,text,limit)
-        right=constants['COMPACT_HUD_HP_TEXT_RIGHT'] if compact else 96
-        label(text,right-measure(mapping,font,text),constants['COMPACT_HUD_HP_TEXT_Y'] if compact else 21,limit)
+        tx=(width-measure(mapping,font,text))//2 if compact else 96-measure(mapping,font,text)
+        label(text,tx,constants['COMPACT_HUD_HP_TEXT_Y'] if compact else 21,limit)
         _,_,exp,epal=read_png(Path('graphics/battle_interface/expbar.png'))
         for i in range(8):
             fill=max(0,min(8,37-i*8))
@@ -65,7 +66,7 @@ def card(player,compact):
             for y,sy in enumerate(rows):
                 for x in range(8):
                     color=exp[sy][fill*8+x]
-                    if color:image[(24 if compact else 32)+y][(24 if compact else 32)+i*8+x]=epal[color]
+                    if color:image[32+y][(24 if compact else 32)+i*8+x]=epal[color]
     return image
 
 
@@ -74,7 +75,7 @@ for compact in (False,True):
     base=Path('graphics/battle_environment/plain')
     image=render(base,base/'map.bin',width=240,height=112)+[[(32,40,48)]*240 for _ in range(48)]
     for player in (False,True):
-        cx,cy=(168,100) if compact and player else (34,20) if compact else (168,88) if player else (34,30)
+        cx,cy=(160,92) if compact and player else (34,20) if compact else (168,88) if player else (34,30)
         panel=card(player,compact)
         for y,row in enumerate(panel):
             for x,color in enumerate(row):

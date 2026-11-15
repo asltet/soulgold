@@ -46,27 +46,26 @@ def check():
     cases=0
     for maximum in (1,9,99,999,9999):
         for current in range(maximum+1):
-            text=f'{current:4d}/{maximum}'
+            text=f'{current}/{maximum}'
             font=fit(mapping,fonts,text,c['COMPACT_HUD_HP_TEXT_WIDTH'])
             width=measure(mapping,font,text)
             assert width<=c['COMPACT_HUD_HP_TEXT_WIDTH']
-            for x,y,_ in ink(mapping,font,text,c['COMPACT_HUD_HP_TEXT_RIGHT']-width,c['COMPACT_HUD_HP_TEXT_Y']):
-                assert 64<=x<100 and 15<=y<24, (text,x,y)
-                if y==15:assert x>=c['COMPACT_HUD_NAME_X']+c['COMPACT_HUD_NAME_WIDTH'],(text,x,y)
+            for x,y,_ in ink(mapping,font,text,(c['COMPACT_HUD_WIDTH']-width)//2,c['COMPACT_HUD_HP_TEXT_Y']):
+                assert 32<=x<80 and 21<=y<30, (text,x,y)
             cases+=1
-    for text in ['CHARIZARD','gypqjgypsy','WWWWWWWWWW','iiiiiiiiii']:
-        for suffix in ['', ' ♂', ' ♀']:
-            if any(char not in mapping for char in suffix):continue
-            word=text+suffix
-            font=fit(mapping,fonts,word,c['COMPACT_HUD_NAME_WIDTH'])
-            assert measure(mapping,font,word)<=c['COMPACT_HUD_NAME_WIDTH']
-            for x,y,_ in ink(mapping,font,word,c['COMPACT_HUD_NAME_X'],3):assert x<76 and y<16
+    for word in ['CHARIZARD','gypqjgypsy','WWWWWWWWWW','iiiiiiiiii']:
+        font=fit(mapping,fonts,word,c['COMPACT_HUD_NAME_WIDTH'])
+        assert measure(mapping,font,word)<=c['COMPACT_HUD_NAME_WIDTH']
+        for x,y,_ in ink(mapping,font,word,c['COMPACT_HUD_NAME_X'],0):assert x<68 and y<13
+    for word in ['\u2642','\u2640']:
+        assert measure(mapping,fonts[0],word)<=c['COMPACT_HUD_GENDER_WIDTH']
+        for x,y,_ in ink(mapping,fonts[0],word,c['COMPACT_HUD_GENDER_X'],0):assert 76<=x<84 and y<13
     for level in (1,9,10,99,100,255):
         text='\x01'+str(level)
         width=measure(mapping,fonts[0],text)
         assert width<=24
         for x,y,_ in ink(mapping,fonts[0],text,c['COMPACT_HUD_LEVEL_RIGHT']-width,c['COMPACT_HUD_LEVEL_Y']):
-            assert x>=76 and y<15
+            assert x>=84 and y<13
     print(f'PASS: {cases} HP strings and long-name/gender source glyphs fit without EXP/header collision')
 
 

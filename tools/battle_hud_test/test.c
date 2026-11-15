@@ -24,7 +24,7 @@ int main(int argc, char **argv)
         for (doubles = 0; doubles <= 1; doubles++)
             for (right = 0; right <= 1; right++)
             {
-                u32 height = player && !doubles ? COMPACT_HUD_PLAYER_HEIGHT : COMPACT_HUD_OTHER_HEIGHT;
+                u32 height = CompactHudHeight(player, doubles);
                 CompactHudGetCoords(player, doubles, right, &cx, &cy);
                 assert(cx - 32 >= 0 && cx - 32 + COMPACT_HUD_WIDTH <= 240);
                 assert(cy - 16 >= 0 && cy - 16 + height <= 112);
@@ -32,17 +32,24 @@ int main(int argc, char **argv)
                 {
                     s16 lx, ly;
                     CompactHudGetCoords(player, doubles, FALSE, &lx, &ly);
-                    assert(ly + COMPACT_HUD_OTHER_HEIGHT <= cy);
+                    assert(ly + (s16)height <= cy);
                 }
             }
-    assert(COMPACT_HUD_NAME_X + COMPACT_HUD_NAME_WIDTH <= COMPACT_HUD_LEVEL_RIGHT - 24);
-    assert(COMPACT_HUD_HP_TEXT_X >= 64); // Existing label16 + HP fill48.
-    assert(COMPACT_HUD_HP_TEXT_X + COMPACT_HUD_HP_TEXT_WIDTH == COMPACT_HUD_HP_TEXT_RIGHT);
+    assert(COMPACT_HUD_NAME_X + COMPACT_HUD_NAME_WIDTH <= COMPACT_HUD_GENDER_X);
+    assert(COMPACT_HUD_GENDER_X + COMPACT_HUD_GENDER_WIDTH <= COMPACT_HUD_LEVEL_RIGHT - 24);
+    assert(COMPACT_HUD_BAR_X + 16 == COMPACT_HUD_HP_FILL_X);
+    assert(COMPACT_HUD_HP_FILL_X + 24 == COMPACT_HUD_WIDTH / 2);
+    assert(COMPACT_HUD_HP_TEXT_X + COMPACT_HUD_HP_TEXT_WIDTH / 2 == COMPACT_HUD_WIDTH / 2);
+    for (i = COMPACT_HUD_PLATE_TOP; i < COMPACT_HUD_PLAYER_HEIGHT; i++)
+    {
+        assert(CompactHudPlateLeft(i) > 0 && CompactHudPlateLeft(i) < COMPACT_HUD_HP_FILL_X);
+        if (i > COMPACT_HUD_PLATE_TOP) assert(CompactHudPlateLeft(i) <= CompactHudPlateLeft(i - 1));
+    }
     for (i = 0; i < 8; i++)
     {
         u32 offset = CompactHudExpTileOffset(i);
         u32 half = offset >= 64 ? 64 : 0;
-        assert(offset < 128 && (offset - half) / 8 == 3);
+        assert(offset < 128 && (offset - half) / 8 == 4);
         for (x = 0; x < i; x++) assert(offset != CompactHudExpTileOffset(x));
     }
     for (i = 0; i <= 8; i++)
