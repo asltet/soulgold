@@ -1,5 +1,6 @@
 #include "global.h"
 #include "battle_hud_layout.h"
+#include "data/bw2_hud_assets.h"
 #include "malloc.h"
 #include "battle.h"
 #include "battle_boss.h"
@@ -399,7 +400,7 @@ static const struct Subsprite sCompactHealthBar_Opponent[] =
 {
     {.x = -16, .y = 0, .shape = SPRITE_SHAPE(32x8), .size = SPRITE_SIZE(32x8), .tileOffset = 0, .priority = 1},
     {.x = 16, .y = 0, .shape = SPRITE_SHAPE(32x8), .size = SPRITE_SIZE(32x8), .tileOffset = 4, .priority = 1},
-    {.x = -24, .y = 0, .shape = SPRITE_SHAPE(8x8), .size = SPRITE_SIZE(8x8), .tileOffset = 8, .priority = 1},
+    {.x = -32, .y = 0, .shape = SPRITE_SHAPE(8x8), .size = SPRITE_SIZE(8x8), .tileOffset = 8, .priority = 1},
 };
 static const struct SubspriteTable sCompactHealthBar_OpponentTable[] =
 {
@@ -693,19 +694,20 @@ static void PaintCompactHealthboxRegion(u32 spriteId, u32 x, u32 top, u32 width,
     gSprites[spriteId].data[1] = other;
     gSprites[other].data[1] = SPRITE_NONE;
     FillCompactHealthboxRect(spriteId, x, top, width, rows, 0);
-    for (y = max(top, COMPACT_HUD_PLATE_TOP); y < min(top + rows, height); y++)
+    // Replay source artwork, including each asymmetrical cut, rather than
+    // manufacturing a trapezoid. Pixels are palette-remapped, never resized.
+    for (y = top; y < min(top + rows, height); y++)
     {
-        u32 left = CompactHudPlateLeft(y);
-        u32 right = COMPACT_HUD_WIDTH - left;
-        u32 start = max(x, left), end = min(x + width, right);
-        if (start >= end)
-            continue;
-        FillCompactHealthboxRect(spriteId, start, y, end - start, 1,
-                            y == COMPACT_HUD_PLATE_TOP || y == height - 1 ? 4 : HEALTHBOX_BG_INDEX);
-        if (left >= x && left < x + width)
-            FillCompactHealthboxRect(spriteId, left, y, 1, 1, 4);
-        if (right - 1 >= x && right - 1 < x + width)
-            FillCompactHealthboxRect(spriteId, right - 1, y, 1, 1, 4);
+        u32 px = x;
+        while (px < min(x + width, COMPACT_HUD_WIDTH))
+        {
+            u32 start = px;
+            const u8 *row = sBw2HudFrames[IsOnPlayerSide(battler)][y];
+            u32 color = (row[px / 2] >> ((px & 1) * 4)) & 15;
+            do {px++;} while (px < min(x + width, COMPACT_HUD_WIDTH)
+                && ((row[px / 2] >> ((px & 1) * 4)) & 15) == color);
+            FillCompactHealthboxRect(spriteId, start, y, px - start, 1, color);
+        }
     }
     gSprites[spriteId].data[1] = savedMain;
     gSprites[other].data[1] = savedOther;
@@ -1060,7 +1062,28 @@ static void CopyHealthbarGfxWithStyle(const void *src, void *dest, u32 size, boo
 
 static void CopyHealthbarGfx(u8 healthboxSpriteId, const void *src, void *dest, u32 size)
 {
-    if (IsDarkHealthbox(healthboxSpriteId))
+    if (IsCompactHealthbox(healthboxSpriteId))
+    {
+        const u32 *source = src;
+        bool32 label = src == GetHealthboxElementGfxPtr(HEALTHBOX_GFX_1) && size == 64;
+        u8 *target = dest;
+        while (size >= TILE_SIZE_4BPP)
+        {
+            u32 tile[8];
+            CompactHudMakeHpTile(tile, source);
+            if (label)
+                for (u32 row = 0; row < 5; row++)
+                    tile[row] = source[row + 1];
+            if (IsDarkHealthbox(healthboxSpriteId))
+                CopyHealthbarGfxWithStyle(tile, target, sizeof(tile), TRUE);
+            else
+                CpuCopy32(tile, target, sizeof(tile));
+            source += 8;
+            target += TILE_SIZE_4BPP;
+            size -= TILE_SIZE_4BPP;
+        }
+    }
+    else if (IsDarkHealthbox(healthboxSpriteId))
         CopyHealthbarGfxWithStyle(src, dest, size, TRUE);
     else
         CpuCopy32(src, dest, size);
@@ -1230,15 +1253,32 @@ static void PrintHpOnHealthbox(u32 spriteId, s16 currHp, s16 maxHp, u32 bgColor,
 
     if (IsCompactHealthbox(spriteId))
     {
-        u32 font = GetFontIdToFit(text, HP_FONT, 0, COMPACT_HUD_HP_TEXT_WIDTH);
+        u8 digits[2 * HP_MAX_DIGITS + 1];
+        u32 count = 0, value, divisor, i, x, y;
         union TextColor color = GetHealthboxTextColor(spriteId);
-        color.background = 0; // Blank glyph rows must not erase the HP bar above.
-        width = GetStringWidth(font, text, 0);
-        // Opponent numeric-only debug view replaces its HP bar within the shorter plate.
-        u32 textY = IsOnPlayerSide(gSprites[spriteId].hMain_Battler) ? COMPACT_HUD_HP_TEXT_Y : COMPACT_HUD_BAR_Y - 3;
-        FillSpriteRectColor(spriteId, COMPACT_HUD_HP_TEXT_X, textY + 3, COMPACT_HUD_HP_TEXT_WIDTH, 9, bgColor);
-        AddSpriteTextPrinterParameterized6(spriteId, font, (COMPACT_HUD_WIDTH - width) / 2, textY,
-                                          0, 0, color, 0, text);
+        // Native BW2 digit ink uses six rows; keep four-digit GBA HP support.
+        for (i = 0; i < 2; i++)
+        {
+            value = min(9999, max(0, i ? maxHp : currHp));
+            divisor = 1;
+            while (value / divisor >= 10)
+                divisor *= 10;
+            do {digits[count++] = value / divisor; value %= divisor; divisor /= 10;} while (divisor);
+            if (i == 0)
+                digits[count++] = 10; // Slash from the original BW2 HP-number cell.
+        }
+        u32 left = (COMPACT_HUD_WIDTH - (count - 1) * 7 - 8) / 2;
+        u32 top = IsOnPlayerSide(gSprites[spriteId].hMain_Battler) ? COMPACT_HUD_HP_TEXT_Y : COMPACT_HUD_BAR_Y;
+        PaintCompactHealthboxRegion(spriteId, COMPACT_HUD_HP_TEXT_X, top, COMPACT_HUD_HP_TEXT_WIDTH, 6);
+        for (i = 0; i < count; i++)
+            for (y = 0; y < 6; y++)
+                for (x = 0; x < 8; x++)
+                {
+                    u32 ink = sBw2HudDigits[digits[i]][y][x];
+                    if (ink)
+                        FillCompactHealthboxRect(spriteId, left + i * 7 + x, top + y, 1, 1,
+                                                 ink == 1 ? color.foreground : color.shadow);
+                }
         gSprites[spriteId].data[1] = savedValue1;
         gSprites[spriteId2].data[1] = savedValue2;
         return;
@@ -2207,12 +2247,8 @@ static void UpdateStatusIconInHealthbox(u8 healthboxSpriteId, u32 status)
     CopyStatusIconGfx(healthboxSpriteId,
                       statusGfxPtr,
                       (void *)(OBJ_VRAM0 + (gSprites[healthboxSpriteId].oam.tileNum + tileNumAdder) * TILE_SIZE_4BPP));
-    if (IsCompactHealthbox(healthboxSpriteId))
-    {
-        if (!gBattleSpritesDataPtr->battlerData[battler].hpNumbersNoBars)
-            CpuFill32(0, (void *)(OBJ_VRAM0 + gSprites[healthBarSpriteId].oam.tileNum * TILE_SIZE_4BPP), 64);
-    }
-    else if (GetBattlerCoordsIndex(battler) == BATTLE_COORDS_DOUBLES || !IsOnPlayerSide(battler))
+    if (!IsCompactHealthbox(healthboxSpriteId)
+        && (GetBattlerCoordsIndex(battler) == BATTLE_COORDS_DOUBLES || !IsOnPlayerSide(battler)))
     {
         if (!gBattleSpritesDataPtr->battlerData[battler].hpNumbersNoBars)
         {

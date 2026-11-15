@@ -391,7 +391,7 @@ void CreateIndicatorSprite(enum BattlerId battler)
     y += sIndicatorPositions[position][1];
     if (B_COMPACT_BATTLE_HUD && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && IsOnPlayerSide(battler)))
     {
-        x += IsOnPlayerSide(battler) ? 12 : 20;
+        x += IsOnPlayerSide(battler) ? 28 : 36;
         y -= 3;
     }
 

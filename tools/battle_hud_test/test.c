@@ -40,16 +40,11 @@ int main(int argc, char **argv)
     assert(COMPACT_HUD_BAR_X + 16 == COMPACT_HUD_HP_FILL_X);
     assert(COMPACT_HUD_HP_FILL_X + 24 == COMPACT_HUD_WIDTH / 2);
     assert(COMPACT_HUD_HP_TEXT_X + COMPACT_HUD_HP_TEXT_WIDTH / 2 == COMPACT_HUD_WIDTH / 2);
-    for (i = COMPACT_HUD_PLATE_TOP; i < COMPACT_HUD_PLAYER_HEIGHT; i++)
-    {
-        assert(CompactHudPlateLeft(i) > 0 && CompactHudPlateLeft(i) < COMPACT_HUD_HP_FILL_X);
-        if (i > COMPACT_HUD_PLATE_TOP) assert(CompactHudPlateLeft(i) <= CompactHudPlateLeft(i - 1));
-    }
     for (i = 0; i < 8; i++)
     {
         u32 offset = CompactHudExpTileOffset(i);
         u32 half = offset >= 64 ? 64 : 0;
-        assert(offset < 128 && (offset - half) / 8 == 4);
+        assert(offset < 128 && (offset - half) / 8 == 3);
         for (x = 0; x < i; x++) assert(offset != CompactHudExpTileOffset(x));
     }
     for (i = 0; i <= 8; i++)
@@ -64,6 +59,12 @@ int main(int argc, char **argv)
         for (x = 0; x < 8; x++)
             if (((guarded.tile[1] >> (4*x)) & 15) == (source[8][3] & 15)) filled++;
         assert(filled == i); // Actual source graphics keep all0..8 fill steps.
+    }
+    {
+        u32 sourceRows[8] = {0,1,2,3,4,5,6,7}, output[8];
+        CompactHudMakeHpTile(output, sourceRows);
+        assert(output[0] == 1 && output[1] == 3 && output[2] == 4 && output[3] == 5 && output[4] == 7);
+        assert(output[5] == 0 && output[6] == 0 && output[7] == 0);
     }
     puts("PASS: panel bounds/doubles separation, text lanes, EXP addressing/fill0..8 and guarded packing");
     return 0;

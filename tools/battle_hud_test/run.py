@@ -33,3 +33,6 @@ subprocess.run([args.cc,'tools/battle_hud_test/test.c','-iquote','include','-std
 subprocess.run([str(executable.resolve()),str(fixture.resolve())],check=True)
 from font_bounds import check
 check()
+
+from asset_bounds import check as check_assets
+check_assets()

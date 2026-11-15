@@ -10,6 +10,8 @@ import sys
 sys.path.insert(0, str(Path('tools/battle_camera_test').resolve()))
 from preview_backgrounds import read_png, write_png, render
 from font_bounds import load, fit, measure, ink
+from import_bw2 import convert
+frames,digit_ink=convert(Path("graphics/battle_interface/bw2_original"))
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output',type=Path,required=True)
@@ -26,10 +28,9 @@ def card(player,compact):
     width=constants['COMPACT_HUD_WIDTH'] if compact else w
     image=[[None]*width for _ in range(height)]
     if compact:
-        for y in range(constants['COMPACT_HUD_PLATE_TOP'],height):
-            left=20-(y-constants['COMPACT_HUD_PLATE_TOP'])//3
-            for x in range(left,width-left):
-                image[y][x]=pal[4 if y in (constants['COMPACT_HUD_PLATE_TOP'],height-1) or x in (left,width-left-1) else 2]
+        for y,row in enumerate(frames[player][:height]):
+            for x,value in enumerate(row):
+                if value:image[y][x]=pal[value]
     else:
         for y in range(h):
             for x in range(w):
@@ -49,16 +50,23 @@ def card(player,compact):
     slots=[1,2]+[3+max(0,min(8,31-i*8)) for i in range(6)]
     bx=constants['COMPACT_HUD_BAR_X'] if compact else 32 if player else 24
     for i,tile in enumerate(slots):
-        for y in range(8):
+        rows=([1,2,3,4,5] if i<2 else [1,3,4,5,7]) if compact else range(8)
+        for y,sy in enumerate(rows):
             for x in range(8):
-                color=bar[y][tile*8+x]
+                color=bar[sy][tile*8+x]
                 if color and bx+i*8+x<width:image[(constants['COMPACT_HUD_BAR_Y'] if compact else 16)+y][bx+i*8+x]=bpal[color]
     if player:
-        text='63/100' if compact else '  63/100'
-        limit=constants['COMPACT_HUD_HP_TEXT_WIDTH'] if compact else 56
-        font=fit(mapping,fonts,text,limit)
-        tx=(width-measure(mapping,font,text))//2 if compact else 96-measure(mapping,font,text)
-        label(text,tx,constants['COMPACT_HUD_HP_TEXT_Y'] if compact else 21,limit)
+        if compact:
+            text='63/100'
+            left=(width-(len(text)-1)*7-8)//2
+            for i,c in enumerate(text):
+                for y,row in enumerate(digit_ink[10 if c=='/' else int(c)]):
+                    for x,value in enumerate(row):
+                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+i*7+x]=pal[1 if value==1 else 3]
+        else:
+            text='  63/100'
+            font=fit(mapping,fonts,text,56)
+            label(text,96-measure(mapping,font,text),21,56)
         _,_,exp,epal=read_png(Path('graphics/battle_interface/expbar.png'))
         for i in range(8):
             fill=max(0,min(8,37-i*8))
@@ -66,7 +74,7 @@ def card(player,compact):
             for y,sy in enumerate(rows):
                 for x in range(8):
                     color=exp[sy][fill*8+x]
-                    if color:image[32+y][(24 if compact else 32)+i*8+x]=epal[color]
+                    if color:image[(24 if compact else 32)+y][32+i*8+x]=epal[color]
     return image
 
 
@@ -75,7 +83,7 @@ for compact in (False,True):
     base=Path('graphics/battle_environment/plain')
     image=render(base,base/'map.bin',width=240,height=112)+[[(32,40,48)]*240 for _ in range(48)]
     for player in (False,True):
-        cx,cy=(160,92) if compact and player else (34,20) if compact else (168,88) if player else (34,30)
+        cx,cy=(144,100) if compact and player else (34,20) if compact else (168,88) if player else (34,30)
         panel=card(player,compact)
         for y,row in enumerate(panel):
             for x,color in enumerate(row):
