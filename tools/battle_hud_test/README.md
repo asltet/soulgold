@@ -22,3 +22,5 @@ Manual emulator tests: singles/doubles/Safari, long names/gender/levels, HP0/1/f
 The latest importer also ports all27 original HP fill tiles and nine striped EXP tiles. Native/offline checks validate source-word equality, fill0..8, borders and end caps. Existing GBA palettes and48/64px bar lengths remain. The old HP label remains local artwork.
 
 Latest layout preserves original HP/EXP/Lv labels in the complete native cell. Side-specific header/HP lanes and fixed-slash numbers replace the earlier centered layout. EXP uses four-row inset4 in row3 at X40/Y28. Compact HP label OBJ slots are blank; body artwork supplies HP letters. Tests verify original colored label pixels and native three-digit/four-digit adapted number positions.
+
+Overlap safeguard: HP tiles now use rows3..7 and the8px OBJ moves up3, leaving its bottom before the number lane. Native tests seed full-height green residue, verify sanitation/guards/caught preservation and all27 visible frames. This is a static reproduction, not evidence of the actual runtime writer. Palette slot5 supplies true-black HP digits/outline; Lv outline uses header-shadow slot1. Validate fades and all themes in-game.

@@ -27,6 +27,7 @@ def card(player,compact):
     w,h,p,pal=read_png(Path('graphics/battle_interface')/(name+'.png'))
     height=constants['COMPACT_HUD_PLAYER_HEIGHT' if player else 'COMPACT_HUD_OTHER_HEIGHT'] if compact else h
     width=constants['COMPACT_HUD_WIDTH'] if compact else w
+    if compact:pal[5]=(0,0,0)
     image=[[None]*width for _ in range(height)]
     if compact:
         for y,row in enumerate(frames[player][:height]):
@@ -60,7 +61,7 @@ def card(player,compact):
         rows=([1,2,3,4,5] if i<2 else [1,3,4,5,7]) if compact else range(8)
         for y,sy in enumerate(rows):
             for x in range(8):
-                color=((hp_tiles[0][max(0,min(8,31-(i-2)*8))][y]>>(4*x))&15) if compact and i>=2 else bar[sy][tile*8+x]
+                color=((hp_tiles[0][max(0,min(8,31-(i-2)*8))][y+3]>>(4*x))&15) if compact and i>=2 else bar[sy][tile*8+x]
                 if color and bx+i*8+x<width:image[(constants['COMPACT_HUD_BAR_Y'] if compact else 16)+y][bx+i*8+x]=bpal[color]
     if player:
         if compact:
@@ -69,7 +70,7 @@ def card(player,compact):
                 left=64+i*8
                 for y,row in enumerate(digit_ink[10 if c=='/' else int(c)]):
                     for x,value in enumerate(row):
-                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+x]=pal[1 if value==1 else 3]
+                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+x]=pal[5]
         else:
             text='  63/100'
             font=fit(mapping,fonts,text,56)

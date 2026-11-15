@@ -39,7 +39,16 @@ def convert(directory):
     remap = {0:0,2:4,13:2,3:2,15:3,1:1,14:3,11:11,12:9,9:7,10:8}
     for number in (435,438):
         original = cell(directory, number)
-        frames.append([[remap[v] for v in row] for row in original])
+        image = [[remap[v] for v in row] for row in original]
+        hp_left = 40 if number == 438 else 32
+        lv_left = 80 if number == 438 else 88
+        for y,row in enumerate(original):
+            for x,value in enumerate(row):
+                if value == 2 and 16 <= y <= 22 and hp_left-1 <= x <= hp_left+15:
+                    image[y][x] = 5 # Reserved compact-HUD true-black palette entry.
+                if value == 2 and 8 <= y <= 16 and lv_left <= x < lv_left+8:
+                    image[y][x] = 1 # Same dark gray as the header shadow.
+        frames.append(image)
     source = tiles(directory / '434.png')
     slash = cell(directory, 456)
     glyphs = []
@@ -60,7 +69,7 @@ def bars(directory):
         pixels = source[offset*2:offset*2+64]
         result = [sum(mapping[pixels[y*8+x]] << (4*x) for x in range(8)) for y in rows]
         return [0]*top + result + [0]*(8-top-len(result))
-    hp = [[pack(base+fill*32,range(2,7),hp_map) for fill in range(9)] for base in (0,0x120,0x240)]
+    hp = [[pack(base+fill*32,range(2,7),hp_map,3) for fill in range(9)] for base in (0,0x120,0x240)]
     exp = [pack(0x400+fill*32,range(1,5),exp_map,4) for fill in range(9)]
     # End caps are ordinary opaque border columns in the original cells.
     for number,rows in ((447,range(2,7)),(453,range(1,5))):

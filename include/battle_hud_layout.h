@@ -21,6 +21,8 @@
 #define COMPACT_HUD_BAR_Y 17
 #define COMPACT_HUD_HP_FILL_X 56
 #define COMPACT_HUD_HP_FILL_WIDTH 48
+#define COMPACT_HUD_HP_TILE_INSET 3
+#define COMPACT_HUD_BLACK_INDEX 5
 #define COMPACT_HUD_HP_TEXT_X 48
 #define COMPACT_HUD_HP_TEXT_WIDTH 72
 #define COMPACT_HUD_HP_TEXT_Y 22
@@ -64,6 +66,17 @@ static inline u32 CompactHudHpDigitX(u32 currentCount, u32 maxCount, u32 index)
     if (index == currentCount)
         return 80;
     return 88 + (index - currentCount - 1) * (maxCount > 3 ? 7 : 8);
+}
+
+// Keep the complete8px hardware OBJ above the numeric lane. Its lower5 rows
+// contain the native bar; upper3 and former label tiles must stay transparent.
+static inline void CompactHudSanitizeHpSprite(volatile u32 *tiles)
+{
+    for (u32 word = 0; word < 16; word++)
+        tiles[word] = 0;
+    for (u32 tile = 2; tile < 8; tile++)
+        for (u32 row = 0; row < COMPACT_HUD_HP_TILE_INSET; row++)
+            tiles[tile * 8 + row] = 0;
 }
 
 #endif

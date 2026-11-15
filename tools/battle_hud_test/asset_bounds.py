@@ -16,6 +16,14 @@ def check():
             assert [bool(v) for v in frames[player][y]]==[bool(v) for v in expected]
     assert sum(v in (9,11) for row in frames[1][25:30] for v in row[18:40]) > 0
     assert any(v in (7,8) for row in frames[1][9:16] for v in row[80:88])
+    for player,number in enumerate((435,438)):
+        original=cell(directory,number)
+        hp_left=40 if player else 32
+        lv_left=80 if player else 88
+        assert any(frames[player][y][x] == 5 for y in range(16,23) for x in range(hp_left-1,hp_left+16))
+        for y in range(8,17):
+            for x in range(lv_left,lv_left+8):
+                if original[y][x] == 2:assert frames[player][y][x] == 1
     # Verify generated engine arrays still contain those exact converted pixels.
     header=Path('src/data/bw2_hud_assets.h').read_text().split('static const u8 sBw2HudDigits')[0]
     packed=bytes(int(v,16) for v in re.findall(r'0x([0-9A-F]{2})',header))
@@ -30,8 +38,8 @@ def check():
         assert [int(v,16) for v in re.findall(r'0x([0-9A-F]{8})',body)] == [word for tile in data for word in tile]
     for color in hp:
         for fill,tile in enumerate(color):
-            assert sum(10 <= ((tile[2]>>(x*4))&15) <= 15 for x in range(8)) == fill
-            assert tile[0]==tile[4]==0x88888888 and tile[5:]==[0,0,0]
+            assert sum(10 <= ((tile[5]>>(x*4))&15) <= 15 for x in range(8)) == fill
+            assert tile[3]==tile[7]==0x88888888 and tile[:3]==[0,0,0]
     for fill,tile in enumerate(exp):
         assert sum(((tile[5]>>(x*4))&15) in (9,11) for x in range(8)) == fill
         assert tile[4]==tile[7]==0x11111111 and tile[:4]==[0,0,0,0]

@@ -400,7 +400,7 @@ static const struct Subsprite sCompactHealthBar_Opponent[] =
 {
     {.x = -16, .y = 0, .shape = SPRITE_SHAPE(32x8), .size = SPRITE_SIZE(32x8), .tileOffset = 0, .priority = 1},
     {.x = 16, .y = 0, .shape = SPRITE_SHAPE(32x8), .size = SPRITE_SIZE(32x8), .tileOffset = 4, .priority = 1},
-    {.x = -32, .y = 0, .shape = SPRITE_SHAPE(8x8), .size = SPRITE_SIZE(8x8), .tileOffset = 8, .priority = 1},
+    {.x = -32, .y = COMPACT_HUD_HP_TILE_INSET, .shape = SPRITE_SHAPE(8x8), .size = SPRITE_SIZE(8x8), .tileOffset = 8, .priority = 1},
 };
 static const struct SubspriteTable sCompactHealthBar_OpponentTable[] =
 {
@@ -886,7 +886,10 @@ static void SpriteCB_HealthBar(struct Sprite *sprite)
     if (IsCompactHealthbox(healthboxSpriteId))
     {
         sprite->x = gSprites[healthboxSpriteId].x + CompactHudHpFillX(IsOnPlayerSide(gSprites[healthboxSpriteId].hMain_Battler)) - 32;
-        sprite->y = gSprites[healthboxSpriteId].y + COMPACT_HUD_BAR_Y - 16;
+        sprite->y = gSprites[healthboxSpriteId].y + COMPACT_HUD_BAR_Y - COMPACT_HUD_HP_TILE_INSET - 16;
+        // Tasks/controllers can refresh legacy bar graphics before this callback.
+        // Enforce the compact strip's transparency immediately before OAM build.
+        CompactHudSanitizeHpSprite((volatile u32 *)(OBJ_VRAM0 + sprite->oam.tileNum * TILE_SIZE_4BPP));
         sprite->x2 = gSprites[healthboxSpriteId].x2;
         sprite->y2 = gSprites[healthboxSpriteId].y2;
         return;
@@ -1196,6 +1199,13 @@ static void UpdateHealthboxPalette(u8 healthboxSpriteId, struct Pokemon *mon, u8
     if (paletteNum == 0xFF)
         return;
 
+    if (IsCompactHealthbox(healthboxSpriteId))
+    {
+        // Slot5 is unused by the imported plate except its HP outline. Load
+        // true RGB black into both fade buffers; no additional bank is needed.
+        static const u16 black = RGB_BLACK;
+        LoadPalette(&black, OBJ_PLTT_OFFSET + PLTT_ID(paletteNum) + COMPACT_HUD_BLACK_INDEX, sizeof(black));
+    }
     gSprites[healthboxSpriteId].oam.paletteNum = paletteNum;
     gSprites[gSprites[healthboxSpriteId].oam.affineParam].oam.paletteNum = paletteNum;
 
@@ -1280,7 +1290,7 @@ static void PrintHpOnHealthbox(u32 spriteId, s16 currHp, s16 maxHp, u32 bgColor,
     {
         u8 digits[2 * HP_MAX_DIGITS + 1];
         u32 count = 0, currentCount = 0, value, divisor, i, x, y;
-        union TextColor color = GetHealthboxTextColor(spriteId);
+        union TextColor color = {.background = 0, .foreground = COMPACT_HUD_BLACK_INDEX, .shadow = COMPACT_HUD_BLACK_INDEX, .accent = 0};
         // Native BW2 digit ink uses six rows; keep four-digit GBA HP support.
         for (i = 0; i < 2; i++)
         {
