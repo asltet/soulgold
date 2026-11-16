@@ -68,15 +68,12 @@ static inline u32 CompactHudHpDigitX(u32 currentCount, u32 maxCount, u32 index)
     return 88 + (index - currentCount - 1) * (maxCount > 3 ? 7 : 8);
 }
 
-// Keep the complete8px hardware OBJ above the numeric lane. Its lower5 rows
-// contain the native bar; upper3 and former label tiles must stay transparent.
-static inline void CompactHudSanitizeHpSprite(volatile u32 *tiles)
+// EXP shares tile row3 with HP-number ink. Replace only its bottom four
+// words; zero padding in the ROM tile is not transparency to a VRAM write.
+static inline void CompactHudBlitExpTile(volatile u32 *dest, const u32 *source)
 {
-    for (u32 word = 0; word < 16; word++)
-        tiles[word] = 0;
-    for (u32 tile = 2; tile < 8; tile++)
-        for (u32 row = 0; row < COMPACT_HUD_HP_TILE_INSET; row++)
-            tiles[tile * 8 + row] = 0;
+    for (u32 row = 4; row < 8; row++)
+        dest[row] = source[row];
 }
 
 #endif

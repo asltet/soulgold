@@ -69,30 +69,23 @@ int main(void)
         assert(filled == i && sBw2HudExpTiles[i][4] == 0x11111111 && sBw2HudExpTiles[i][7] == 0x11111111);
         for (x = 0; x < 4; x++) assert(sBw2HudExpTiles[i][x] == 0);
     }
-    // Reproduce a legacy8-row green strip and verify that it cannot survive
-    // in the compact label/padding lanes. The ninth caught tile is untouched.
+    // Reproduce the actual full-tile EXP overwrite, then exercise the exact
+    // subtile blitter used by the engine. Preserve existing HP ink and guards.
+    for (u32 fill = 0; fill <= 8; fill++)
     {
-        struct {u32 before, tiles[9*8], after;} guarded;
+        struct {u32 before, tile[8], after;} guarded;
         guarded.before = 0xDEADBEEF; guarded.after = 0xCAFEBABE;
-        for (i = 0; i < 9*8; i++) guarded.tiles[i] = 0xAAAAAAAA;
-        CompactHudSanitizeHpSprite(guarded.tiles);
+        for (i = 0; i < 8; i++) guarded.tile[i] = 0x55555555 + i;
+        // Previous32-byte copy erased all upper words with transparent zeros.
+        for (i = 0; i < 8; i++) guarded.tile[i] = sBw2HudExpTiles[fill][i];
+        for (i = 0; i < 4; i++) assert(guarded.tile[i] == 0);
+        for (i = 0; i < 8; i++) guarded.tile[i] = 0x55555555 + i;
+        CompactHudBlitExpTile(guarded.tile, sBw2HudExpTiles[fill]);
+        for (i = 0; i < 4; i++) assert(guarded.tile[i] == 0x55555555 + i);
+        for (i = 4; i < 8; i++) assert(guarded.tile[i] == sBw2HudExpTiles[fill][i]);
         assert(guarded.before == 0xDEADBEEF && guarded.after == 0xCAFEBABE);
-        for (i = 0; i < 16; i++) assert(guarded.tiles[i] == 0);
-        for (i = 2; i < 8; i++)
-            for (x = 0; x < 8; x++) assert(guarded.tiles[i*8+x] == (x<3 ? 0 : 0xAAAAAAAA));
-        for (i = 8*8; i < 9*8; i++) assert(guarded.tiles[i] == 0xAAAAAAAA);
-        assert(COMPACT_HUD_BAR_Y + 7 >= COMPACT_HUD_HP_TEXT_Y); // Old overlap.
-        assert(COMPACT_HUD_BAR_Y - COMPACT_HUD_HP_TILE_INSET + 7 < COMPACT_HUD_HP_TEXT_Y);
-        for (u32 color = 0; color < 3; color++)
-            for (u32 fill = 0; fill <= 8; fill++)
-            {
-                for (i = 2; i < 8; i++)
-                    for (x = 0; x < 8; x++) guarded.tiles[i*8+x] = sBw2HudHpTiles[color][fill][x];
-                CompactHudSanitizeHpSprite(guarded.tiles);
-                for (i = 2; i < 8; i++)
-                    for (x = 3; x < 8; x++) assert(guarded.tiles[i*8+x] == sBw2HudHpTiles[color][fill][x]);
-            }
     }
+    assert(COMPACT_HUD_BAR_Y - COMPACT_HUD_HP_TILE_INSET + 7 < COMPACT_HUD_HP_TEXT_Y);
     puts("PASS: panel bounds/doubles separation, text lanes, EXP addressing, native BW2 HP/EXP fill0..8 and zero padding");
     return 0;
 }

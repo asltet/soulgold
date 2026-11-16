@@ -887,9 +887,6 @@ static void SpriteCB_HealthBar(struct Sprite *sprite)
     {
         sprite->x = gSprites[healthboxSpriteId].x + CompactHudHpFillX(IsOnPlayerSide(gSprites[healthboxSpriteId].hMain_Battler)) - 32;
         sprite->y = gSprites[healthboxSpriteId].y + COMPACT_HUD_BAR_Y - COMPACT_HUD_HP_TILE_INSET - 16;
-        // Tasks/controllers can refresh legacy bar graphics before this callback.
-        // Enforce the compact strip's transparency immediately before OAM build.
-        CompactHudSanitizeHpSprite((volatile u32 *)(OBJ_VRAM0 + sprite->oam.tileNum * TILE_SIZE_4BPP));
         sprite->x2 = gSprites[healthboxSpriteId].x2;
         sprite->y2 = gSprites[healthboxSpriteId].y2;
         return;
@@ -2630,8 +2627,10 @@ static void MoveBattleBarGraphically(enum BattlerId battler, u8 whichBar)
                 // Doubles/opponent sheets have only64 tiles; EXP is singles-only.
                 if (IsDoubleBattle() || !IsOnPlayerSide(battler))
                     continue;
-                CpuCopy32(sBw2HudExpTiles[array[i]], (void *)(OBJ_VRAM0
-                    + (gSprites[healthboxSpriteId].oam.tileNum + CompactHudExpTileOffset(i)) * TILE_SIZE_4BPP), TILE_SIZE_4BPP);
+                // Preserve upper rows24..27: they contain plate/HP-number pixels.
+                CompactHudBlitExpTile((volatile u32 *)(OBJ_VRAM0
+                    + (gSprites[healthboxSpriteId].oam.tileNum + CompactHudExpTileOffset(i)) * TILE_SIZE_4BPP),
+                    sBw2HudExpTiles[array[i]]);
                 continue;
             }
             if (i < 4)

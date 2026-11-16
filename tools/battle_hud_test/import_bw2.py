@@ -44,7 +44,7 @@ def convert(directory):
         lv_left = 80 if number == 438 else 88
         for y,row in enumerate(original):
             for x,value in enumerate(row):
-                if value == 2 and 16 <= y <= 22 and hp_left-1 <= x <= hp_left+15:
+                if value in (1,2,14) and 16 <= y <= 22 and hp_left-1 <= x <= hp_left+15:
                     image[y][x] = 5 # Reserved compact-HUD true-black palette entry.
                 if value == 2 and 8 <= y <= 16 and lv_left <= x < lv_left+8:
                     image[y][x] = 1 # Same dark gray as the header shadow.
