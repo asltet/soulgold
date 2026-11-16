@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #define TRUE 1
 #define FALSE 0
 typedef uint8_t u8;
@@ -13,6 +14,13 @@ typedef int16_t s16;
 #include "battle_hud_layout.h"
 #include "battle_hud_reference.h"
 #include "../../src/data/bw2_hud_assets.h"
+
+static u16 mockPalette[48];
+static void MockPaletteWrite(const void *source, u32 offset, u32 size)
+{
+    assert(offset + size / sizeof(u16) <= 48);
+    memcpy(mockPalette + offset, source, size);
+}
 
 int main(void)
 {
@@ -89,7 +97,27 @@ int main(void)
     }
     assert(COMPACT_HUD_BAR_Y - COMPACT_HUD_HP_TILE_INSET + 7 < COMPACT_HUD_HP_TEXT_Y);
     // Screenshot2 skin: test the actual shared sampler and EXP write helper.
-    assert(ReferenceHudFramePixel(FALSE,TRUE,117,14,0) == 1);
+    assert(ReferenceHudFramePixel(FALSE,TRUE,117,13,0) == 5);
+    assert(ReferenceHudFramePixel(FALSE,TRUE,117,14,0) == 2);
+    assert(ReferenceHudFramePixel(TRUE,TRUE,2,22,0) == 0);
+    assert(ReferenceHudFramePixel(TRUE,TRUE,8,22,0) == 5);
+    assert(ReferenceHudFramePixel(TRUE,TRUE,3,27,0) == 5);
+    assert(ReferenceHudFramePixel(TRUE,TRUE,2,28,0) == 5);
+    assert(ReferenceHudFramePixel(TRUE,TRUE,80,10,1) == 5);
+    // Run the actual loader with both normal and dark preexisting shadows.
+    for (u32 theme = 0; theme < 2; theme++)
+    {
+        for (i = 0; i < 48; i++) mockPalette[i] = 0x1100 + i;
+        u16 shadow = theme ? 0x0421 : 0x2108;
+        mockPalette[17] = shadow;
+        ReferenceHudLoadPalette(16, MockPaletteWrite);
+        assert(mockPalette[17] == shadow);
+        for (i = 0; i < 48; i++)
+        {
+            if (i == 17) continue;
+            assert(mockPalette[i] == (i >= 18 && i < 28 ? sReferenceHudPalette[i-16] : 0x1100 + i));
+        }
+    }
     assert(ReferenceHudFramePixel(TRUE,TRUE,30,19,0) == 2);
     assert(ReferenceHudFramePixel(TRUE,TRUE,90,25,0) == 4);
     assert(ReferenceHudFramePixel(TRUE,TRUE,40,33,0) == 2);
@@ -131,6 +159,7 @@ int main(void)
                 bool32 player = scene != 0, single = scene != 2;
                 u32 original = y < 32 ? (sBw2HudFrames[player][y][x/2] >> ((x&1)*4))&15 : 0;
                 u32 color = ReferenceHudFramePixel(player,single,x,y,original);
+                assert(color != 1); // Reference frame must not consume the shared shadow color.
                 fputc(color,preview);
             }
     fclose(preview);

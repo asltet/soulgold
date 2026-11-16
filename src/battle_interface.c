@@ -744,7 +744,7 @@ static void PaintCompactHealthboxRegion(u32 spriteId, u32 x, u32 top, u32 width,
             u32 capX = side ? right : left;
             u32 start = max(top, capY), end = min(top + rows, capY + capHeight);
             if (capX >= x && capX < x + width && start < end)
-                FillCompactHealthboxRect(spriteId, capX, start, 1, end - start, 1);
+                FillCompactHealthboxRect(spriteId, capX, start, 1, end - start, REFERENCE_BATTLE_HUD ? 5 : 1);
         }
     }
     gSprites[spriteId].data[1] = savedMain;
@@ -1180,7 +1180,7 @@ static union TextColor GetHealthboxTextColor(u8 healthboxSpriteId)
 
 static union TextColor GetCompactHeaderColor(u8 healthboxSpriteId)
 {
-    union TextColor color = {.background = 0, .foreground = IsDarkHealthbox(healthboxSpriteId) ? 6 : 2, .shadow = 1, .accent = 0};
+    union TextColor color = {.background = 0, .foreground = IsDarkHealthbox(healthboxSpriteId) ? 6 : 2, .shadow = REFERENCE_BATTLE_HUD ? 5 : 1, .accent = 0};
     return color;
 }
 
@@ -1206,7 +1206,7 @@ static void UpdateHealthboxPalette(u8 healthboxSpriteId, struct Pokemon *mon, u8
         return;
 
     if (IsCompactHealthbox(healthboxSpriteId) && REFERENCE_BATTLE_HUD)
-        LoadPalette(sReferenceHudPalette, OBJ_PLTT_OFFSET + PLTT_ID(paletteNum), sizeof(sReferenceHudPalette));
+        ReferenceHudLoadPalette(OBJ_PLTT_OFFSET + PLTT_ID(paletteNum), LoadPalette);
     else if (IsCompactHealthbox(healthboxSpriteId))
     {
         // Slot5 is unused by the imported plate except its HP outline. Load

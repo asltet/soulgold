@@ -1,10 +1,13 @@
 """Offline checks of copied original resources, native outlines and digit lanes."""
 from pathlib import Path
 import hashlib,json,re
-from import_bw2 import convert,cell,bars
+from import_bw2 import convert,cell,bars,read_png
 
 
 def check():
+    for name in ('enemy_mon_shadow','enemy_mon_shadows_sized'):
+        _,_,pixels,_=read_png(Path('graphics/battle_interface')/(name+'.png'))
+        assert {v for row in pixels for v in row if v} == {1}
     directory=Path('graphics/battle_interface/bw2_original')
     for name,digest in json.loads((directory/'provenance.json').read_text()).items():
         assert hashlib.sha256((directory/name).read_bytes()).hexdigest()==digest,name

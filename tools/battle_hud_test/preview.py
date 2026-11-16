@@ -50,7 +50,7 @@ def card(player,compact,doubles=False):
     def label(text,x,y,limit,header=False):
         font=fit(mapping,fonts,text,limit)
         for px,py,color in ink(mapping,font,text,x,y):
-            if 0<=px<width and 0<=py<height:image[py][px]=pal[(2 if color==1 else 1) if header else (1 if color==1 else 3)]
+            if 0<=px<width and 0<=py<height:image[py][px]=pal[(2 if color==1 else (5 if reference else 1)) if header else (1 if color==1 else 3)]
     nickname='CHARIZARD' if player else 'GENGAR'
     side=0 if player else 8
     if compact:
@@ -100,7 +100,7 @@ def card(player,compact,doubles=False):
                         if color:image[(28 if compact else 32)+y][(40 if compact else 32)+i*8+x]=epal[color]
     if compact:
         for x in (55-side,104-side):
-            for y in range(17,22):image[y][x]=pal[1]
+            for y in range(17,22):image[y][x]=pal[5 if reference else 1]
         if player and not reference and not doubles:
             for x in (39,104):
                 for y in range(28,32):image[y][x]=pal[1]
