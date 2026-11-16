@@ -23,7 +23,8 @@ def check():
         assert any(frames[player][y][x] == 5 for y in range(16,23) for x in range(hp_left-1,hp_left+16))
         for y in range(16,23):
             for x in range(hp_left-1,hp_left+16):
-                if original[y][x] in (1,2,14):assert frames[player][y][x] == 5
+                if original[y][x] == 2:assert frames[player][y][x] == 5
+                if original[y][x] in (1,14):assert frames[player][y][x] == 8
         for y in range(8,17):
             for x in range(lv_left,lv_left+8):
                 if original[y][x] == 2:assert frames[player][y][x] == 1

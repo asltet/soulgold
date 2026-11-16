@@ -36,7 +36,7 @@ def convert(directory):
     frames = []
     # Preserve the original plate AND its baked HP/EXP/Lv artwork.
     # Keep source positions within the native128x32 cell canvas.
-    remap = {0:0,2:4,13:2,3:2,15:3,1:1,14:3,11:11,12:9,9:7,10:8}
+    remap = {0:0,2:4,13:2,3:2,15:3,1:1,14:3,11:11,12:9,9:7,10:7}
     for number in (435,438):
         original = cell(directory, number)
         image = [[remap[v] for v in row] for row in original]
@@ -45,7 +45,7 @@ def convert(directory):
         for y,row in enumerate(original):
             for x,value in enumerate(row):
                 if value in (1,2,14) and 16 <= y <= 22 and hp_left-1 <= x <= hp_left+15:
-                    image[y][x] = 5 # Reserved compact-HUD true-black palette entry.
+                    image[y][x] = 5 if value == 2 else 8 # Black outline, empty-HP gray interior.
                 if value == 2 and 8 <= y <= 16 and lv_left <= x < lv_left+8:
                     image[y][x] = 1 # Same dark gray as the header shadow.
         frames.append(image)
@@ -55,7 +55,7 @@ def convert(directory):
     for number in range(11):
         rows = [source[0x520*2+number*64+y*8:0x520*2+number*64+(y+1)*8]
                 if number < 10 else slash[y][24:32] for y in range(1,7)]
-        glyphs.append([[1 if v == 1 else 2 if v == 14 else 0 for v in row] for row in rows])
+        glyphs.append([[1 if v in (1,14) else 2 if v == 2 else 0 for v in row] for row in rows])
     return frames, glyphs
 
 

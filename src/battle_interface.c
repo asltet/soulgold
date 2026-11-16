@@ -1202,6 +1202,9 @@ static void UpdateHealthboxPalette(u8 healthboxSpriteId, struct Pokemon *mon, u8
         // true RGB black into both fade buffers; no additional bank is needed.
         static const u16 black = RGB_BLACK;
         LoadPalette(&black, OBJ_PLTT_OFFSET + PLTT_ID(paletteNum) + COMPACT_HUD_BLACK_INDEX, sizeof(black));
+        // Match the empty HP tile gray. The importer folds the redundant Lv
+        // gold shade into slot7, freeing slot8 without touching gender10/11.
+        LoadPalette(&gBattleInterface_HealthbarPal[3], OBJ_PLTT_OFFSET + PLTT_ID(paletteNum) + COMPACT_HUD_HP_GRAY_INDEX, sizeof(u16));
     }
     gSprites[healthboxSpriteId].oam.paletteNum = paletteNum;
     gSprites[gSprites[healthboxSpriteId].oam.affineParam].oam.paletteNum = paletteNum;
@@ -1287,7 +1290,7 @@ static void PrintHpOnHealthbox(u32 spriteId, s16 currHp, s16 maxHp, u32 bgColor,
     {
         u8 digits[2 * HP_MAX_DIGITS + 1];
         u32 count = 0, currentCount = 0, value, divisor, i, x, y;
-        union TextColor color = {.background = 0, .foreground = COMPACT_HUD_BLACK_INDEX, .shadow = COMPACT_HUD_BLACK_INDEX, .accent = 0};
+        union TextColor color = {.background = 0, .foreground = COMPACT_HUD_HP_GRAY_INDEX, .shadow = COMPACT_HUD_BLACK_INDEX, .accent = 0};
         // Native BW2 digit ink uses six rows; keep four-digit GBA HP support.
         for (i = 0; i < 2; i++)
         {

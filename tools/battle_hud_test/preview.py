@@ -27,7 +27,9 @@ def card(player,compact):
     w,h,p,pal=read_png(Path('graphics/battle_interface')/(name+'.png'))
     height=constants['COMPACT_HUD_PLAYER_HEIGHT' if player else 'COMPACT_HUD_OTHER_HEIGHT'] if compact else h
     width=constants['COMPACT_HUD_WIDTH'] if compact else w
-    if compact:pal[5]=(0,0,0)
+    if compact:
+        pal[5]=(0,0,0)
+        pal[8]=tuple(map(int,Path("graphics/battle_interface/healthbar.pal").read_text().splitlines()[6].split()))
     image=[[None]*width for _ in range(height)]
     if compact:
         for y,row in enumerate(frames[player][:height]):
@@ -70,7 +72,7 @@ def card(player,compact):
                 left=64+i*8
                 for y,row in enumerate(digit_ink[10 if c=='/' else int(c)]):
                     for x,value in enumerate(row):
-                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+x]=pal[5]
+                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+x]=pal[8 if value==1 else 5]
         else:
             text='  63/100'
             font=fit(mapping,fonts,text,56)
