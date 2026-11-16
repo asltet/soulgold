@@ -27,7 +27,7 @@ static inline u32 ReferenceHudFramePixel(bool32 player, bool32 single, u32 x, u3
         if (y >= 16 && y <= 21)
         {
             u32 left = y < 20 ? 20 - y : y - 20;
-            if (x >= left) color = y == 16 || x == left ? 5 : y == 21 ? 3 : 2;
+            if (x >= left) color = x == left || (y == 16 && x >= 9) ? 5 : y == 21 ? 3 : 2;
         }
         if (y >= 22 && y <= 28)
         {
@@ -43,7 +43,7 @@ static inline u32 ReferenceHudFramePixel(bool32 player, bool32 single, u32 x, u3
         if (y >= 16 && y <= 21)
         {
             u32 right = y < 20 ? 119 + y - 16 : 123 - (y - 20);
-            if (x <= right) color = y == 16 || x == right ? 5 : y == 21 ? 3 : 2;
+            if (x <= right) color = x == right || (y == 16 && x <= 114) ? 5 : y == 21 ? 3 : 2;
         }
         if (y >= 22 && y <= 25)
         {

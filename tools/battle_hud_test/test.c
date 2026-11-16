@@ -118,6 +118,12 @@ int main(void)
             assert(mockPalette[i] == (i >= 18 && i < 28 ? sReferenceHudPalette[i-16] : 0x1100 + i));
         }
     }
+    for (i = 5; i <= 8; i++) assert(ReferenceHudFramePixel(TRUE,TRUE,i,16,0) == 2);
+    assert(ReferenceHudFramePixel(TRUE,TRUE,4,16,0) == 5);
+    assert(ReferenceHudFramePixel(TRUE,TRUE,9,16,0) == 5);
+    for (i = 115; i <= 118; i++) assert(ReferenceHudFramePixel(FALSE,TRUE,i,16,0) == 2);
+    assert(ReferenceHudFramePixel(FALSE,TRUE,114,16,0) == 5);
+    assert(ReferenceHudFramePixel(FALSE,TRUE,119,16,0) == 5);
     assert(ReferenceHudFramePixel(TRUE,TRUE,30,19,0) == 2);
     assert(ReferenceHudFramePixel(TRUE,TRUE,90,25,0) == 4);
     assert(ReferenceHudFramePixel(TRUE,TRUE,40,33,0) == 2);
