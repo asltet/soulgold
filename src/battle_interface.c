@@ -1,5 +1,6 @@
 #include "global.h"
 #include "battle_hud_layout.h"
+#include "battle_hud_reference.h"
 #include "data/bw2_hud_assets.h"
 #include "malloc.h"
 #include "battle.h"
@@ -665,7 +666,7 @@ static bool32 IsCompactHealthbox(u32 spriteId)
         return FALSE;
     enum BattlerId battler = gSprites[spriteId].hMain_Battler;
     return battler < gBattlersCount
-        && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && IsOnPlayerSide(battler));
+        && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && (REFERENCE_BATTLE_HUD || IsOnPlayerSide(battler)));
 }
 
 // The engine fill/text helpers traverse a seam only when starting in its first
@@ -678,6 +679,15 @@ static void FillCompactHealthboxRect(u32 spriteId, u32 x, u32 y, u32 width, u32 
         x -= 64;
     }
     FillSpriteRectColor(spriteId, x, y, width, height, color);
+}
+
+static u32 GetCompactHealthboxPixel(enum BattlerId battler, u32 x, u32 y)
+{
+    bool32 player = IsOnPlayerSide(battler);
+    u32 original = y < 32 ? (sBw2HudFrames[player][y][x / 2] >> ((x & 1) * 4)) & 15 : 0;
+    if (REFERENCE_BATTLE_HUD)
+        return ReferenceHudFramePixel(player, GetBattlerCoordsIndex(battler) == BATTLE_COORDS_SINGLES && !IsDoubleBattle(), x, y, original);
+    return original;
 }
 
 // Repaint just the requested region. Header pixels remain transparent; only
@@ -702,16 +712,15 @@ static void PaintCompactHealthboxRegion(u32 spriteId, u32 x, u32 top, u32 width,
         while (px < min(x + width, COMPACT_HUD_WIDTH))
         {
             u32 start = px;
-            const u8 *row = sBw2HudFrames[IsOnPlayerSide(battler)][y];
-            u32 color = (row[px / 2] >> ((px & 1) * 4)) & 15;
+            u32 color = GetCompactHealthboxPixel(battler, px, y);
             do {px++;} while (px < min(x + width, COMPACT_HUD_WIDTH)
-                && ((row[px / 2] >> ((px & 1) * 4)) & 15) == color);
+                && GetCompactHealthboxPixel(battler, px, y) == color);
             FillCompactHealthboxRect(spriteId, start, y, px - start, 1, color);
         }
     }
     // SoulGold doubles intentionally omit EXP. Remove its otherwise orphaned
     // baked label from the plate interior, leaving the original outer edge.
-    if (IsOnPlayerSide(battler) && GetBattlerCoordsIndex(battler) == BATTLE_COORDS_DOUBLES)
+    if (!REFERENCE_BATTLE_HUD && IsOnPlayerSide(battler) && GetBattlerCoordsIndex(battler) == BATTLE_COORDS_DOUBLES)
     {
         u32 left = max(x, 16), right = min(x + width, 41);
         u32 start = max(top, 24), end = min(top + rows, 31);
@@ -724,7 +733,7 @@ static void PaintCompactHealthboxRegion(u32 spriteId, u32 x, u32 top, u32 width,
     {
         if (bar == 0 && gBattleSpritesDataPtr->battlerData[battler].hpNumbersNoBars)
             continue;
-        if (bar == 1 && (!IsOnPlayerSide(battler) || GetBattlerCoordsIndex(battler) != BATTLE_COORDS_SINGLES))
+        if (bar == 1 && (REFERENCE_BATTLE_HUD || !IsOnPlayerSide(battler) || GetBattlerCoordsIndex(battler) != BATTLE_COORDS_SINGLES))
             continue;
         u32 capY = bar ? 28 : COMPACT_HUD_BAR_Y;
         u32 capHeight = bar ? 4 : 5;
@@ -1017,7 +1026,7 @@ void GetBattlerHealthboxCoords(enum BattlerId battler, s16 *x, s16 *y)
 
     *x = sBattlerHealthboxCoords[index][position][0];
     *y = sBattlerHealthboxCoords[index][position][1];
-    if (B_COMPACT_BATTLE_HUD && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && IsOnPlayerSide(battler)))
+    if (B_COMPACT_BATTLE_HUD && !((gBattleTypeFlags & BATTLE_TYPE_SAFARI) && (REFERENCE_BATTLE_HUD || IsOnPlayerSide(battler))))
         CompactHudGetCoords(IsOnPlayerSide(battler), index == BATTLE_COORDS_DOUBLES,
                             position == B_POSITION_PLAYER_RIGHT || position == B_POSITION_OPPONENT_RIGHT, x, y);
 }
@@ -1196,7 +1205,9 @@ static void UpdateHealthboxPalette(u8 healthboxSpriteId, struct Pokemon *mon, u8
     if (paletteNum == 0xFF)
         return;
 
-    if (IsCompactHealthbox(healthboxSpriteId))
+    if (IsCompactHealthbox(healthboxSpriteId) && REFERENCE_BATTLE_HUD)
+        LoadPalette(sReferenceHudPalette, OBJ_PLTT_OFFSET + PLTT_ID(paletteNum), sizeof(sReferenceHudPalette));
+    else if (IsCompactHealthbox(healthboxSpriteId))
     {
         // Slot5 is unused by the imported plate except its HP outline. Load
         // true RGB black into both fade buffers; no additional bank is needed.
@@ -1242,7 +1253,9 @@ static void UpdateLvlInHealthbox(u8 healthboxSpriteId, u8 lvl)
     {
         u32 x = CompactHudLevelX(IsOnPlayerSide(battler));
         ConvertIntToDecimalStringN(text, lvl, STR_CONV_MODE_LEFT_ALIGN, 3);
-        FillSpriteRectColor(spriteId, x - 64, 0, 24, 16, 0);
+        // Restore decorative pixels behind the level lane, including the
+        // reference opponent ribbon tip, instead of clearing them away.
+        PaintCompactHealthboxRegion(healthboxSpriteId, x, 0, 24, 16);
         // Repaint Lv after a gimmick ends; hide it while its replacement icon is active.
         PaintCompactHealthboxRegion(healthboxSpriteId, x - 8, 0, 8, 16);
         if (GetIndicatorPalTag(battler) != TAG_NONE)
@@ -1290,7 +1303,7 @@ static void PrintHpOnHealthbox(u32 spriteId, s16 currHp, s16 maxHp, u32 bgColor,
     {
         u8 digits[2 * HP_MAX_DIGITS + 1];
         u32 count = 0, currentCount = 0, value, divisor, i, x, y;
-        union TextColor color = {.background = 0, .foreground = COMPACT_HUD_HP_GRAY_INDEX, .shadow = COMPACT_HUD_BLACK_INDEX, .accent = 0};
+        union TextColor color = {.background = 0, .foreground = REFERENCE_BATTLE_HUD ? 2 : COMPACT_HUD_HP_GRAY_INDEX, .shadow = COMPACT_HUD_BLACK_INDEX, .accent = 0};
         // Native BW2 digit ink uses six rows; keep four-digit GBA HP support.
         for (i = 0; i < 2; i++)
         {
@@ -2620,6 +2633,23 @@ static void MoveBattleBarGraphically(enum BattlerId battler, u8 whichBar)
         {
             for (i = 0; i < 8; i++)
                 array[i] = 0;
+        }
+        u8 expHealthbox = gBattleSpritesDataPtr->battleBars[battler].healthboxSpriteId;
+        if (REFERENCE_BATTLE_HUD && IsCompactHealthbox(expHealthbox))
+        {
+            if (!IsDoubleBattle() && IsOnPlayerSide(battler))
+            {
+                u32 filled = 0;
+                for (i = 0; i < 8; i++) filled += array[i];
+                u32 pixels = ReferenceHudExpPixels(filled);
+                for (i = 0; i < 10; i++)
+                {
+                    u32 fill = pixels > i * 8 ? min(8, pixels - i * 8) : 0;
+                    ReferenceHudBlitExpTile((volatile u32 *)(OBJ_VRAM0
+                        + (gSprites[expHealthbox].oam.tileNum + ReferenceHudExpTileOffset(i)) * TILE_SIZE_4BPP), fill);
+                }
+            }
+            break;
         }
         for (i = 0; i < 8; i++)
         {

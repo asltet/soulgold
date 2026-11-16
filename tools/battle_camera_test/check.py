@@ -11,8 +11,9 @@ import argparse
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--classic-hud', action='store_true', help='Also validate the stock HUD configuration')
+parser.add_argument('--legacy-hud', action='store_true', help='Validate the original imported BW2 HUD skin')
 args = parser.parse_args()
-defines = ['-DB_COMPACT_BATTLE_HUD=0'] if args.classic_hud else []
+defines = ['-DB_COMPACT_BATTLE_HUD=0'] if args.classic_hud else (['-DB_COMPACT_BATTLE_HUD_STYLE=1'] if args.legacy_hud else [])
 
 suffix = ".exe" if os.name == "nt" else ""
 gcc = shutil.which("arm-none-eabi-gcc")

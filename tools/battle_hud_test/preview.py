@@ -7,6 +7,7 @@ from pathlib import Path
 import argparse
 import re
 import sys
+import struct
 sys.path.insert(0, str(Path('tools/battle_camera_test').resolve()))
 from preview_backgrounds import read_png, write_png, render
 from font_bounds import load, fit, measure, ink
@@ -18,21 +19,28 @@ parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output',type=Path,required=True)
 args=parser.parse_args()
 mapping,fonts=load()
+reference=False
+native_frames=Path('build/reference-hud-frames.bin').read_bytes()
+native_palette=struct.unpack('<12H',Path('build/reference-hud-palette.bin').read_bytes())
+reference_palette=[tuple(((word>>shift)&31)*255//31 for shift in (0,5,10)) for word in native_palette]
 constants={m[1]:int(m[2]) for m in re.finditer(r'#define\s+(COMPACT_HUD_\w+)\s+(\d+)\b',
             Path('include/battle_hud_layout.h').read_text())}
 
 
-def card(player,compact):
+def card(player,compact,doubles=False):
     name='healthbox_singles_player' if player else 'healthbox_singles_opponent'
     w,h,p,pal=read_png(Path('graphics/battle_interface')/(name+'.png'))
-    height=constants['COMPACT_HUD_PLAYER_HEIGHT' if player else 'COMPACT_HUD_OTHER_HEIGHT'] if compact else h
+    height=(36 if player and reference and not doubles else constants['COMPACT_HUD_PLAYER_HEIGHT' if player else 'COMPACT_HUD_OTHER_HEIGHT']) if compact else h
     width=constants['COMPACT_HUD_WIDTH'] if compact else w
     if compact:
         pal[5]=(0,0,0)
         pal[8]=tuple(map(int,Path("graphics/battle_interface/healthbar.pal").read_text().splitlines()[6].split()))
+        if reference:pal[:12]=reference_palette
     image=[[None]*width for _ in range(height)]
     if compact:
-        for y,row in enumerate(frames[player][:height]):
+        scene=2 if player and doubles else 1 if player else 0
+        source_frames=([list(native_frames[(scene*40+y)*128:(scene*40+y+1)*128]) for y in range(40)] if reference else frames[player])
+        for y,row in enumerate(source_frames[:height]):
             for x,value in enumerate(row):
                 if value:image[y][x]=pal[value]
     else:
@@ -72,39 +80,58 @@ def card(player,compact):
                 left=64+i*8
                 for y,row in enumerate(digit_ink[10 if c=='/' else int(c)]):
                     for x,value in enumerate(row):
-                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+x]=pal[8 if value==1 else 5]
+                        if value:image[constants['COMPACT_HUD_HP_TEXT_Y']+y][left+x]=pal[(2 if reference else 8) if value==1 else 5]
         else:
             text='  63/100'
             font=fit(mapping,fonts,text,56)
             label(text,96-measure(mapping,font,text),21,56)
-        _,_,exp,epal=read_png(Path('graphics/battle_interface/expbar.png'))
-        for i in range(8):
-            fill=max(0,min(8,37-i*8))
-            rows=(2,3,4,5) if compact else range(8)
-            for y,sy in enumerate(rows):
-                for x in range(8):
-                    color=((exp_tiles[fill][y+4]>>(4*x))&15) if compact else exp[sy][fill*8+x]
-                    if color:image[(28 if compact else 32)+y][(40 if compact else 32)+i*8+x]=epal[color]
+        if reference and compact and not doubles:
+            filled=(37*80+32)//64
+            for y in (33,34):
+                for x in range(80):image[y][40+x]=pal[9 if x<filled else 2]
+        elif not doubles:
+            _,_,exp,epal=read_png(Path('graphics/battle_interface/expbar.png'))
+            for i in range(8):
+                fill=max(0,min(8,37-i*8))
+                rows=(2,3,4,5) if compact else range(8)
+                for y,sy in enumerate(rows):
+                    for x in range(8):
+                        color=((exp_tiles[fill][y+4]>>(4*x))&15) if compact else exp[sy][fill*8+x]
+                        if color:image[(28 if compact else 32)+y][(40 if compact else 32)+i*8+x]=epal[color]
     if compact:
         for x in (55-side,104-side):
             for y in range(17,22):image[y][x]=pal[1]
-        if player:
+        if player and not reference and not doubles:
             for x in (39,104):
                 for y in range(28,32):image[y][x]=pal[1]
     return image
 
 
-images=[]
-for compact in (False,True):
+images={}
+for mode in ('original','legacy','reference'):
+    reference=mode=='reference'
+    compact=mode!='original'
     base=Path('graphics/battle_environment/plain')
-    image=render(base,base/'map.bin',width=240,height=112)+[[(32,40,48)]*240 for _ in range(48)]
+    frame=render(base,base/'map.bin',width=240,height=112)+[[(32,40,48)]*240 for _ in range(48)]
     for player in (False,True):
-        cx,cy=(144,96) if compact and player else (34,20) if compact else (168,88) if player else (34,30)
+        cx,cy=((144,92) if reference else (144,96)) if compact and player else ((32,20) if reference else (34,20)) if compact else (168,88) if player else (34,30)
         panel=card(player,compact)
         for y,row in enumerate(panel):
             for x,color in enumerate(row):
                 px,py=cx-32+x,cy-16+y
-                if color is not None and 0<=px<240 and 0<=py<160:image[py][px]=color
-    write_png(args.output/('compact.png' if compact else 'original.png'),image)
-    images.append(image)
-write_png(args.output/'comparison.png',[a+b for a,b in zip(*images)])
+                if color is not None and 0<=px<240 and 0<=py<160:frame[py][px]=color
+    write_png(args.output/(mode+'.png'),frame)
+    images[mode]=frame
+write_png(args.output/'comparison.png',[a+b for a,b in zip(images['legacy'],images['reference'])])
+reference=True
+base=Path('graphics/battle_environment/plain')
+frame=render(base,base/'map.bin',width=240,height=112)+[[(32,40,48)]*240 for _ in range(48)]
+for player in (False,True):
+    for slot in (0,1):
+        cx,cy=(144,64+slot*32) if player else (32,20+slot*28)
+        panel=card(player,True,True)
+        for y,row in enumerate(panel):
+            for x,color in enumerate(row):
+                px,py=cx-32+x,cy-16+y
+                if color is not None and 0<=px<240 and 0<=py<160:frame[py][px]=color
+write_png(args.output/'reference-doubles.png',frame)

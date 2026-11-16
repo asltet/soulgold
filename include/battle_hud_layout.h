@@ -6,6 +6,12 @@
 #define B_COMPACT_BATTLE_HUD TRUE
 #endif
 
+//1 retains the imported BW2 skin;2 selects screenshots/2.png-inspired HUD.
+#ifndef B_COMPACT_BATTLE_HUD_STYLE
+#define B_COMPACT_BATTLE_HUD_STYLE 2
+#endif
+#define REFERENCE_BATTLE_HUD (B_COMPACT_BATTLE_HUD_STYLE == 2)
+
 #define COMPACT_HUD_WIDTH 128
 #define COMPACT_HUD_PLAYER_HEIGHT 32
 #define COMPACT_HUD_DOUBLE_HEIGHT 32
@@ -32,13 +38,13 @@
 
 static inline u32 CompactHudHeight(bool32 player, bool32 doubles)
 {
-    return player ? (doubles ? COMPACT_HUD_DOUBLE_HEIGHT : COMPACT_HUD_PLAYER_HEIGHT) : COMPACT_HUD_OTHER_HEIGHT;
+    return player ? (doubles ? COMPACT_HUD_DOUBLE_HEIGHT : (REFERENCE_BATTLE_HUD ? 36 : COMPACT_HUD_PLAYER_HEIGHT)) : COMPACT_HUD_OTHER_HEIGHT;
 }
 
 static inline void CompactHudGetCoords(bool32 player, bool32 doubles, bool32 right, s16 *x, s16 *y)
 {
-    *x = player ? 144 : 34;
-    *y = player ? (doubles ? (right ? 96 : 64) : 96) : (doubles && right ? 48 : 20);
+    *x = player ? 144 : (REFERENCE_BATTLE_HUD ? 32 : 34);
+    *y = player ? (doubles ? (right ? 96 : 64) : (REFERENCE_BATTLE_HUD ? 92 : 96)) : (doubles && right ? 48 : 20);
 }
 
 // Existing player-single sheets contain two64x64 halves, not a linear128px

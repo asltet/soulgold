@@ -11,7 +11,9 @@ import sys
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--cc', default=shutil.which('gcc'))
+parser.add_argument('--legacy-hud', action='store_true')
 args = parser.parse_args()
+defines = ['-DB_COMPACT_BATTLE_HUD_STYLE=1'] if args.legacy_hud else []
 if not args.cc:
     parser.error('Supply --cc with the native GCC executable')
 sys.path.insert(0, str(Path('tools/battle_camera_test').resolve()))
@@ -20,7 +22,7 @@ from preview_backgrounds import read_png
 Path('build').mkdir(exist_ok=True)
 executable=Path('build/compact-hud-host-test.exe' if sys.platform=='win32' else 'build/compact-hud-host-test')
 subprocess.run([args.cc,'tools/battle_hud_test/test.c','-iquote','include','-std=c99',
-                '-Wall','-Wextra','-Werror','-O2','-o',str(executable)],check=True)
+                '-Wall','-Wextra','-Werror','-O2',*defines,'-o',str(executable)],check=True)
 subprocess.run([str(executable.resolve())],check=True)
 from font_bounds import check
 check()
